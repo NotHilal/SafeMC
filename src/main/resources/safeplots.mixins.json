@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "dev.safemc.safeplots.mixin",
+  "mixins": [
+    "ChunkMapMixin",
+    "DispenserBlockMixin",
+    "FireBlockMixin",
+    "FlowingFluidMixin",
+    "HopperBlockEntityMixin",
+    "LavaFluidMixin",
+    "ServerPlayerMixin",
+    "TrackedEntityAccessor"
+  ],
+  "client": [],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "minVersion": "0.8"
+}

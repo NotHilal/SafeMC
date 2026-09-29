@@ -1,0 +1,8 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="MIT"
+
+[[mods]]
+modId="safeplots_selftest"
+version="1.0.0"
+displayName="SafePlots Self-Test (dev only)"
