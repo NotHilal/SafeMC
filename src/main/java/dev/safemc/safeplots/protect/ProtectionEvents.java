@@ -71,13 +71,13 @@ public final class ProtectionEvents {
             Plot signPlot = manager.plotForSign(level, pos);
             if (signPlot != null) {
                 event.setCanceled(true);
-                ClaimSigns.click(manager, player, signPlot);
+                ClaimSigns.click(manager, player, signPlot, event.getItemStack());
                 return;
             }
         }
 
-        // An admin in sign-linking mode may place a sign anywhere; onPlace links it.
-        if (manager.hasPendingSignLink(player.getUUID()) && isSignItem(event.getItemStack())) {
+        // An admin in sign-linking mode may place a sign anywhere; onPlace links it. Owners still follow the normal rules.
+        if (manager.hasPendingSignLink(player.getUUID()) && PlotManager.isAdmin(player) && isSignItem(event.getItemStack())) {
             return;
         }
 
@@ -156,8 +156,10 @@ public final class ProtectionEvents {
         Entity entity = event.getEntity();
 
         // An admin in sign-linking mode who places a sign links it, wherever it is.
+        // Owners (/plot movesign) only get here where they're allowed to build; ClaimSigns#link checks the rest.
         if (entity instanceof ServerPlayer player && manager.hasPendingSignLink(player.getUUID())
-                && level.getBlockEntity(event.getPos()) instanceof SignBlockEntity) {
+                && level.getBlockEntity(event.getPos()) instanceof SignBlockEntity
+                && (PlotManager.isAdmin(player) || manager.canModify(player, level, event.getPos()))) {
             ClaimSigns.link(manager, player, level, event.getPos(), manager.takePendingSignLink(player.getUUID()));
             return;
         }

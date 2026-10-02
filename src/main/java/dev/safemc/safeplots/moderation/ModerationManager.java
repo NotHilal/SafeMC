@@ -25,7 +25,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 
 /**
- * Mutes and freezes, saved to {@code <world>/safeplots-moderation.json} so they survive relogs and restarts.
+ * Mutes, freezes and jail, saved to {@code <world>/safeplots-moderation.json} so they survive relogs and restarts.
  * Vanish is runtime-only (it ends when the admin logs out). Temp bans use the vanilla ban list.
  */
 public final class ModerationManager {
@@ -39,12 +39,27 @@ public final class ModerationManager {
         }
     }
 
+    /** A saved position: the jail spawn, or where a jailed player was before being sent there. */
+    public record Spot(String dimension, double x, double y, double z, float yRot, float xRot) {}
+
+    /**
+     * {@code until} is epoch millis. {@code back} is where the player was before entering the jail; it is null
+     * until they have actually been moved in (an offline player is moved when they join).
+     */
+    public record Jailed(String name, long until, String reason, @Nullable Spot back) {
+        public boolean expired(long now) {
+            return now >= until;
+        }
+    }
+
     private static @Nullable ModerationManager instance;
 
     private final Path file;
     private final Map<UUID, Mute> mutes = new HashMap<>();
     private final Map<UUID, String> frozen = new HashMap<>();
     private final Set<UUID> vanished = new HashSet<>();
+    private final Map<UUID, Jailed> jailed = new HashMap<>();
+    private @Nullable Spot jailSpot;
 
     private ModerationManager(Path file) {
         this.file = file;
@@ -105,6 +120,36 @@ public final class ModerationManager {
         save();
     }
 
+    // ---------------------------------------------------------------- jail
+
+    public @Nullable Spot jailSpot() {
+        return jailSpot;
+    }
+
+    public void setJailSpot(Spot spot) {
+        jailSpot = spot;
+        save();
+    }
+
+    /** The jail record, including one whose time is up but whose player hasn't been released yet (offline). */
+    public @Nullable Jailed jailed(UUID player) {
+        return jailed.get(player);
+    }
+
+    public boolean isJailed(UUID player) {
+        Jailed j = jailed.get(player);
+        return j != null && !j.expired(System.currentTimeMillis());
+    }
+
+    public void setJailed(UUID player, @Nullable Jailed value) {
+        if (value == null) {
+            jailed.remove(player);
+        } else {
+            jailed.put(player, value);
+        }
+        save();
+    }
+
     // ---------------------------------------------------------------- vanish
 
     public boolean isVanished(UUID player) {
@@ -143,6 +188,16 @@ public final class ModerationManager {
         for (Map.Entry<String, JsonElement> e : frozenJson.entrySet()) {
             frozen.put(UUID.fromString(e.getKey()), e.getValue().getAsString());
         }
+        if (root.has("jail")) {
+            jailSpot = readSpot(root.getAsJsonObject("jail"));
+        }
+        JsonObject jailedJson = root.has("jailed") ? root.getAsJsonObject("jailed") : new JsonObject();
+        for (Map.Entry<String, JsonElement> e : jailedJson.entrySet()) {
+            JsonObject o = e.getValue().getAsJsonObject();
+            jailed.put(UUID.fromString(e.getKey()), new Jailed(o.get("name").getAsString(), o.get("until").getAsLong(),
+                    o.has("reason") ? o.get("reason").getAsString() : "",
+                    o.has("back") ? readSpot(o.getAsJsonObject("back")) : null));
+        }
     }
 
     private void save() {
@@ -159,6 +214,21 @@ public final class ModerationManager {
         JsonObject frozenJson = new JsonObject();
         frozen.forEach((id, name) -> frozenJson.addProperty(id.toString(), name));
         root.add("frozen", frozenJson);
+        if (jailSpot != null) {
+            root.add("jail", writeSpot(jailSpot));
+        }
+        JsonObject jailedJson = new JsonObject();
+        jailed.forEach((id, j) -> {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", j.name());
+            o.addProperty("until", j.until());
+            o.addProperty("reason", j.reason());
+            if (j.back() != null) {
+                o.add("back", writeSpot(j.back()));
+            }
+            jailedJson.add(id.toString(), o);
+        });
+        root.add("jailed", jailedJson);
         try {
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
             try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
@@ -172,5 +242,21 @@ public final class ModerationManager {
         } catch (IOException e) {
             LOGGER.error("[SafePlots] Failed to save {}", file, e);
         }
+    }
+
+    private static Spot readSpot(JsonObject o) {
+        return new Spot(o.get("dimension").getAsString(), o.get("x").getAsDouble(), o.get("y").getAsDouble(),
+                o.get("z").getAsDouble(), o.get("yRot").getAsFloat(), o.get("xRot").getAsFloat());
+    }
+
+    private static JsonObject writeSpot(Spot spot) {
+        JsonObject o = new JsonObject();
+        o.addProperty("dimension", spot.dimension());
+        o.addProperty("x", spot.x());
+        o.addProperty("y", spot.y());
+        o.addProperty("z", spot.z());
+        o.addProperty("yRot", spot.yRot());
+        o.addProperty("xRot", spot.xRot());
+        return o;
     }
 }

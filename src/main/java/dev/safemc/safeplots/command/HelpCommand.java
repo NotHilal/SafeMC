@@ -25,6 +25,8 @@ public final class HelpCommand {
                     new Entry("/plot untrust <player> [plot]", "Remove that access"),
                     new Entry("/plot showlimits [plot]", "Show your plot's borders (run again to hide)"),
                     new Entry("/plot abandon [plot]", "Give up your plot (buildings stay)"),
+                    new Entry("/plot movesign [plot]", "Move your plot's sign to another sign inside it"),
+                    new Entry("/plot cancel", "Stop moving or linking a sign"),
                     new Entry("/ppt help", "This list"))),
             new Section("Homes & teleport", false, List.of(
                     new Entry("/sethome", "Save this spot as your home (replaces the old one)"),
@@ -33,7 +35,8 @@ public final class HelpCommand {
                     new Entry("/tpa <player>", "Ask to teleport to a player"),
                     new Entry("/tpahere <player>", "Ask a player to teleport to you"),
                     new Entry("/tpaccept [player]", "Accept a teleport request"),
-                    new Entry("/tpdeny [player]", "Deny a teleport request"))),
+                    new Entry("/tpdeny [player]", "Deny a teleport request"),
+                    new Entry("/mvtp <world>", "Teleport to another world (world, nether, end, or one an admin made)"))),
             new Section("Graves", false, List.of(
                     new Entry("/grave list", "Where your graves are"))),
             new Section("Plot admin", true, List.of(
@@ -44,7 +47,9 @@ public final class HelpCommand {
                     new Entry("/plot redefine <name> [full | height <min> [max]]", "Move a plot to the selection"),
                     new Entry("/plot setheight <name> <min> [max]", "Change only a plot's height"),
                     new Entry("/plot sign <name>", "Link the next sign you place or click"),
-                    new Entry("/plot cancel", "Stop linking a sign"),
+                    new Entry("/nomobspawn create <name>", "No hostile mob spawns in the selected area"),
+                    new Entry("/nomobspawn delete <name>", "Remove a no-mob-spawn zone"),
+                    new Entry("/nomobspawn list", "List no-mob-spawn zones (/nomobspawn here: the one you're in)"),
                     new Entry("/plot setowner <name> <player>", "Give a plot to a player"),
                     new Entry("/plot removeowner <name>", "Make a plot available again"),
                     new Entry("/plot delete <name>", "Delete a plot (blocks stay)"),
@@ -54,6 +59,12 @@ public final class HelpCommand {
                     new Entry("/plot info [name]", "Details of a plot"),
                     new Entry("/plot showlimits <name>", "Show any plot's borders"),
                     new Entry("/plot bypass", "Toggle protection bypass for yourself"))),
+            new Section("Worlds", true, List.of(
+                    new Entry("/mv create <name> <type> [seed]", "New world: normal, amplified, large_biomes, flat, void, nether, end"),
+                    new Entry("/mv list", "List worlds"),
+                    new Entry("/mv setspawn", "Set the spawn of the world you're in"),
+                    new Entry("/mv delete <name>", "Delete a world and everything in it"),
+                    new Entry("/mvtp <world> <player>", "Send a player to a world (no warm-up)"))),
             new Section("Grave admin", true, List.of(
                     new Entry("/grave list <player>", "Someone else's graves"),
                     new Entry("/grave restore <id>", "Give a grave's items to its (online) owner"))),
@@ -63,7 +74,10 @@ public final class HelpCommand {
                     new Entry("/unfreeze <player>", "Unfreeze"),
                     new Entry("/mute <player> [duration|perm] [reason]", "Block chat and /msg"),
                     new Entry("/unmute <player>", "Lift a mute"),
-                    new Entry("/tempban <player> <duration> [reason]", "Ban that ends by itself (/pardon to lift)"))));
+                    new Entry("/tempban <player> <duration> [reason]", "Ban that ends by itself (/pardon to lift)"),
+                    new Entry("/setjail", "Set the jail spawn where you stand"),
+                    new Entry("/jail <player> <duration> [reason]", "Send a player to jail for a while"),
+                    new Entry("/unjail <player>", "Release a player from jail early"))));
 
     private HelpCommand() {}
 

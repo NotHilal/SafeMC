@@ -4,6 +4,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
@@ -15,6 +16,7 @@ public final class Plot {
     private @Nullable UUID owner;
     private final Set<UUID> trusted = new LinkedHashSet<>();
     private @Nullable BlockPos sign;
+    private DyeColor signColor = DyeColor.WHITE;
 
     public Plot(String name, String dimension, BlockPos a, BlockPos b) {
         this.name = name;
@@ -110,6 +112,15 @@ public final class Plot {
 
     public void setSign(@Nullable BlockPos sign) {
         this.sign = sign;
+    }
+
+    /** Text color of the claimed sign; owners change it by right-clicking the sign with a dye. */
+    public DyeColor signColor() {
+        return signColor;
+    }
+
+    public void setSignColor(DyeColor signColor) {
+        this.signColor = signColor;
     }
 
     public String describeBounds() {

@@ -17,6 +17,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Map;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.item.DyeColor;
 
 /**
  * Reads and writes {@code <world>/safeplots.json}. Writes go to a temp file first and are then
@@ -54,6 +55,9 @@ final class PlotStore {
                 if (o.has("sign") && !o.get("sign").isJsonNull()) {
                     plot.setSign(readPos(o, "sign"));
                 }
+                if (o.has("signColor")) {
+                    plot.setSignColor(DyeColor.byName(o.get("signColor").getAsString(), DyeColor.WHITE));
+                }
                 plots.put(plot.name(), plot);
             }
 
@@ -88,6 +92,7 @@ final class PlotStore {
             plot.trusted().forEach(id -> trusted.add(id.toString()));
             o.add("trusted", trusted);
             o.add("sign", plot.sign() == null ? null : writePos(plot.sign()));
+            o.addProperty("signColor", plot.signColor().getSerializedName());
             plotsJson.add(plot.name(), o);
         }
         root.add("plots", plotsJson);

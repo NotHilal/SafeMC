@@ -46,10 +46,13 @@ Admin means operator permission level 2 or higher (the default `/op` level is 4)
 | `/plot trust <player> [plot]` | Lets a player build in your plot |
 | `/plot untrust <player> [plot]` | Removes that access |
 | `/plot abandon [plot]` | Gives up your plot. The buildings stay exactly as they are |
+| `/plot movesign [plot]` | Moves your plot's claim sign: place a sign inside your plot, or right-click one that's already there. The old sign is blanked |
+| `/plot cancel` | Stops moving (or, for admins, linking) a sign |
 | `/ppt help` (or just `/ppt`) | Lists every command you can use; admins also see the admin and moderation commands. Click a line to type it |
+| `/mvtp <world>` | Teleports you to another world (see [Extra worlds](#extra-worlds-mv-mvtp)) |
 | `/plot showlimits [plot]` | Outlines the plot's borders with glowing particles (only you see them). Run it again to hide them. Admins can show any plot |
 
-Without `[plot]`, these use the plot you are standing in. `trust`, `untrust` and `showlimits` also fall back
+Without `[plot]`, these use the plot you are standing in. `trust`, `untrust`, `movesign` and `showlimits` also fall back
 to your only plot if you have exactly one; if you have several, name the one you mean.
 
 ### Admin commands
@@ -64,7 +67,6 @@ to your only plot if you have exactly one; if you have several, name the one you
 | `/plot setheight <name> <minY> [maxY]` | Changes only the height of an existing plot |
 | `/plot redefine <name> [full \| height <minY> [maxY]]` | Moves an existing plot to your current selection. Owner, trusted players and sign stay |
 | `/plot sign <name>` | The next sign you place or right-click is linked to the plot. Regular and hanging signs both work |
-| `/plot cancel` | Stops sign-linking mode |
 | `/plot delete <name>` | Deletes the plot. Blocks are not changed |
 | `/plot setowner <name> <player>` | Gives the plot to a player, ignoring their claim limit |
 | `/plot removeowner <name>` | Makes the plot available again |
@@ -122,7 +124,10 @@ Right-click the plot's sign. The mod checks, in order:
 2. how many plots you already own compared to your limit
    (`You already own 1/1 plots. Ask an admin for another claim slot.`).
 
-If both checks pass, you get `✓ Plot claimed: house_01` and the sign changes to **CLAIMED / YourName**.
+If both checks pass, you get `✓ Plot claimed: house_01` and the sign changes to **YourName's / property**.
+
+The owner can change the sign's text color by right-clicking it with any dye (one dye is used up). The color is
+saved with the plot and stays when the sign is moved or replaced.
 
 ## Claim limits
 
@@ -210,8 +215,15 @@ All require op level 2 or higher. Durations look like `30m`, `2h`, `7d`, `1w` or
 | `/mute <player> [duration\|perm] [reason]` | Blocks chat and private messages. No duration = permanent. Survives restarts |
 | `/unmute <player>` | Lifts a mute |
 | `/tempban <player> <duration> [reason]` | A normal vanilla ban that ends automatically; kicks them if online. Lift it early with `/pardon <player>` |
+| `/setjail` | Sets the jail spawn to where you stand (position and facing) |
+| `/jail <player> <duration> [reason]` | Teleports the player to the jail. When the time is up they go back to where they were. Jailing them again changes the time |
+| `/unjail <player>` | Releases a player early and sends them back |
 
-Mutes and freezes are stored in `<world>/safeplots-moderation.json`; temp bans in the vanilla
+While jailed, a player can't break or place blocks or use `/home` or `/tpa`, and is pulled back to the jail
+spawn if they get more than 16 blocks away (ender pearls, dying, changing dimension, ...). Jail time keeps
+running while they are offline; a player jailed while offline is sent to jail when they join.
+
+Mutes, freezes and jail are stored in `<world>/safeplots-moderation.json`; temp bans in the vanilla
 `banned-players.json`. All of these work for offline players who have joined before.
 
 Liquids, pistons, hoppers and dispensers inside a plot work normally, and they also work between two plots
@@ -219,6 +231,46 @@ that have the same owner.
 
 Protection doesn't depend on the sign. If the sign is destroyed, the plot stays claimed and protected. If a
 sign is placed at the same spot again, it immediately becomes the claim sign again.
+
+### No-mob-spawn zones
+
+Admins can mark areas (spawn, roads, a town, ...) where hostile mobs never spawn by themselves. Select the
+area with the plot wand (or `/plot pos1` / `/plot pos2`), then:
+
+| Command | What it does |
+|---|---|
+| `/nomobspawn create <name>` | Hostile mobs no longer spawn in the selected X/Z area, at any height |
+| `/nomobspawn delete <name>` | Removes the zone |
+| `/nomobspawn list` | Lists all zones (also just `/nomobspawn`) |
+| `/nomobspawn here` | Tells you which zone you are standing in |
+
+Natural spawns, spawners, trial spawners, patrols, phantoms and structure spawns are blocked. Spawn eggs,
+`/summon`, villagers turning into witches etc. still work, animals spawn normally, and hostile mobs can still
+walk in from outside. Mobs that were already there stay until killed. Zones are stored in
+`<world>/safeplots-nomobspawn.json`.
+
+### Extra worlds (/mv, /mvtp)
+
+Admins can add worlds while the server runs, like Multiverse. Each one is a normal server dimension
+(`safeplots:<name>`) built from vanilla dimension types, so players join with a plain vanilla client.
+
+| Command | What it does |
+|---|---|
+| `/mv create <name> <type> [seed]` | Creates and loads a world. Types: `normal`, `amplified`, `large_biomes`, `flat`, `void`, `nether`, `end`. No seed = random; a word is hashed like on the vanilla create-world screen |
+| `/mv list` | Lists the worlds (also just `/mv`) |
+| `/mv setspawn` | Sets the spawn of the world you're in |
+| `/mv delete <name> confirm` | Unloads the world and deletes its folder. Players inside are sent to the main spawn |
+| `/mvtp <world>` | **Everyone**: goes to a world's spawn, with the usual 3 s warm-up and cooldown. `world`, `nether` and `end` are the vanilla dimensions |
+| `/mvtp <world> <player>` | Admin: sends a player there instantly |
+
+The first visit picks a safe spot near 0,0 as the spawn (a void world gets a small stone platform). Worlds
+are listed in `<world>/safeplots-worlds.json` and stored in `<world>/dimensions/safeplots/<name>/`; they load at
+startup before anyone can join. Plots, homes, graves and no-spawn zones work in them like anywhere else.
+
+- Time and weather follow the main world.
+- Nether/End portals inside an extra world lead to the main Nether/End.
+- A player who was offline inside a world when it was deleted logs back in at the same coordinates in
+  the main world.
 
 ### Deliberate simplifications (V1)
 
@@ -284,4 +336,5 @@ protections with simulated players. It isn't included in the release jar. Enable
 /selftest setup      # immediate checks, then places the tick-based scenarios
 /selftest check      # ~15 s later: liquids, pistons, hoppers, fire, dispenser, abandon/setowner/delete
 /selftest persist    # after a restart: data survived
+/selftest worlds     # creates test worlds; restart, run again: /mv and /mvtp checks
 ```

@@ -85,6 +85,11 @@ public final class PlotCommand {
                         .executes(c -> abandon(c, null))
                         .then(Commands.argument("plot", StringArgumentType.word()).suggests(OWN_PLOTS)
                                 .executes(c -> abandon(c, StringArgumentType.getString(c, "plot")))))
+                .then(Commands.literal("movesign")
+                        .executes(c -> moveSign(c, null))
+                        .then(Commands.argument("plot", StringArgumentType.word()).suggests(OWN_PLOTS)
+                                .executes(c -> moveSign(c, StringArgumentType.getString(c, "plot")))))
+                .then(Commands.literal("cancel").executes(PlotCommand::cancel))
                 // ---- admin commands
                 .then(Commands.literal("wand").requires(ADMIN).executes(PlotCommand::wand))
                 .then(Commands.literal("pos1").requires(ADMIN).executes(c -> corner(c, 1)))
@@ -104,7 +109,6 @@ public final class PlotCommand {
                         .then(Commands.argument("name", StringArgumentType.word()).suggests(ALL_PLOTS).executes(PlotCommand::delete)))
                 .then(Commands.literal("sign").requires(ADMIN)
                         .then(Commands.argument("name", StringArgumentType.word()).suggests(ALL_PLOTS).executes(PlotCommand::sign)))
-                .then(Commands.literal("cancel").requires(ADMIN).executes(PlotCommand::cancel))
                 .then(Commands.literal("setowner").requires(ADMIN)
                         .then(Commands.argument("name", StringArgumentType.word()).suggests(ALL_PLOTS)
                                 .then(Commands.argument("player", GameProfileArgument.gameProfile()).executes(PlotCommand::setOwner))))
@@ -152,6 +156,19 @@ public final class PlotCommand {
         return ok(c, trust
                 ? target.name() + " can now build in " + plot.name() + "."
                 : target.name() + " no longer has access to " + plot.name() + ".");
+    }
+
+    /** Owners move their plot's claim sign to another sign inside the plot (see ClaimSigns#link for the rules). */
+    private static int moveSign(CommandContext<CommandSourceStack> c, @Nullable String plotName) throws CommandSyntaxException {
+        PlotManager manager = manager();
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        Plot plot = ownedPlot(c, manager, player, plotName);
+        if (plot == null) {
+            return 0;
+        }
+        manager.setPendingSignLink(player.getUUID(), plot.name());
+        return ok(c, "Now place a sign inside " + plot.name() + ", or right-click one that's already there, to make it the plot's sign."
+                + " The old sign is blanked. Use /plot cancel to stop.");
     }
 
     private static int abandon(CommandContext<CommandSourceStack> c, @Nullable String plotName) throws CommandSyntaxException {

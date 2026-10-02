@@ -26,7 +26,7 @@ import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import org.jspecify.annotations.Nullable;
 
-/** Enforces mutes and freezes, and keeps vanish consistent when players join. */
+/** Enforces mutes, freezes and jail, and keeps vanish consistent when players join. */
 public final class ModerationEvents {
     /** Chat-like commands a muted player can't use. */
     private static final Set<String> MESSAGE_COMMANDS = Set.of("msg", "tell", "w", "me", "teammsg", "tm", "say", "r", "reply");
@@ -96,6 +96,7 @@ public final class ModerationEvents {
         if (manager.isVanished(player.getUUID()) && player.tickCount % 40 == 0) {
             player.sendSystemMessage(Component.literal("You are vanished").withStyle(ChatFormatting.GRAY), true);
         }
+        Jail.tick(player, manager);
         if (!manager.isFrozen(player.getUUID())) {
             FREEZE_ANCHOR.remove(player.getUUID());
             return;
@@ -155,12 +156,14 @@ public final class ModerationEvents {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onBreak(BreakBlockEvent event) {
         cancelIfFrozen(event.getPlayer(), event);
+        cancelIfJailed(event.getPlayer(), event);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onPlace(BlockEvent.EntityPlaceEvent event) {
         if (event.getEntity() instanceof Player player) {
             cancelIfFrozen(player, event);
+            cancelIfJailed(player, event);
         }
     }
 
@@ -174,6 +177,14 @@ public final class ModerationEvents {
 
     private static void cancelIfFrozen(Player player, ICancellableEvent event) {
         if (!player.level().isClientSide() && frozen(player)) {
+            event.setCanceled(true);
+        }
+    }
+
+    /** Jailed players can't break or place blocks, so they can't dig out or wreck the jail. */
+    private static void cancelIfJailed(Player player, ICancellableEvent event) {
+        ModerationManager manager = ModerationManager.get();
+        if (!player.level().isClientSide() && manager != null && manager.isJailed(player.getUUID())) {
             event.setCanceled(true);
         }
     }

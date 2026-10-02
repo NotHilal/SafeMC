@@ -8,6 +8,7 @@
     "FlowingFluidMixin",
     "HopperBlockEntityMixin",
     "LavaFluidMixin",
+    "MinecraftServerAccessor",
     "ServerPlayerMixin",
     "TrackedEntityAccessor"
   ],

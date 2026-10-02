@@ -23,6 +23,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.server.players.NameAndId;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
@@ -307,6 +308,12 @@ public final class PlotManager {
             ClaimSigns.clear(this, plot.dimension(), plot.sign());
         }
         plot.setSign(pos.immutable());
+        changed();
+        ClaimSigns.refresh(this, plot);
+    }
+
+    public void setSignColor(Plot plot, DyeColor color) {
+        plot.setSignColor(color);
         changed();
         ClaimSigns.refresh(this, plot);
     }

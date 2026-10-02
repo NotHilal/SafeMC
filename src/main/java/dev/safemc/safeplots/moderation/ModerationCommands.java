@@ -18,7 +18,7 @@ import net.minecraft.server.players.UserBanListEntry;
 import org.jspecify.annotations.Nullable;
 
 /**
- * /vanish, /freeze, /unfreeze, /mute, /unmute, /tempban. All require op level 2 (same as the /plot admin commands).
+ * /vanish, /freeze, /unfreeze, /mute, /unmute, /tempban, /setjail, /jail, /unjail. All require op level 2 (same as the /plot admin commands).
  * Temp bans are ordinary vanilla bans with an end date, so /pardon and banned-players.json work as usual.
  */
 public final class ModerationCommands {
@@ -47,6 +47,15 @@ public final class ModerationCommands {
                                 .executes(c -> tempban(c, ""))
                                 .then(Commands.argument("reason", StringArgumentType.greedyString())
                                         .executes(c -> tempban(c, StringArgumentType.getString(c, "reason")))))));
+        d.register(Commands.literal("setjail").requires(STAFF).executes(ModerationCommands::setJail));
+        d.register(Commands.literal("jail").requires(STAFF)
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .then(Commands.argument("duration", StringArgumentType.word())
+                                .executes(c -> jail(c, ""))
+                                .then(Commands.argument("reason", StringArgumentType.greedyString())
+                                        .executes(c -> jail(c, StringArgumentType.getString(c, "reason")))))));
+        d.register(Commands.literal("unjail").requires(STAFF)
+                .then(Commands.argument("player", GameProfileArgument.gameProfile()).executes(ModerationCommands::unjail)));
     }
 
     private static int vanish(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
@@ -142,6 +151,60 @@ public final class ModerationCommands {
             online.connection.disconnect(Component.literal("You are banned for " + Durations.format(ms) + ".\nReason: " + why));
         }
         return ok(c, target.name() + " is banned for " + Durations.format(ms) + ". Use /pardon " + target.name() + " to lift it early.");
+    }
+
+    private static int setJail(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        ModerationManager.Spot spot = Jail.spotOf(player);
+        manager().setJailSpot(spot);
+        return ok(c, String.format("Jail set at %.0f %.0f %.0f in %s. Jailed players are pulled back if they get more than %.0f blocks away.",
+                spot.x(), spot.y(), spot.z(), spot.dimension(), Jail.RADIUS));
+    }
+
+    private static int jail(CommandContext<CommandSourceStack> c, String reason) throws CommandSyntaxException {
+        NameAndId target = single(c);
+        if (target == null) {
+            return 0;
+        }
+        ModerationManager manager = manager();
+        if (manager.jailSpot() == null) {
+            return fail(c, "No jail is set yet. Stand where jailed players should appear and run /setjail.");
+        }
+        String duration = StringArgumentType.getString(c, "duration");
+        long ms = Durations.parse(duration);
+        if (ms < 0) {
+            return fail(c, "Invalid duration \"" + duration + "\". Use e.g. 30m, 2h, 7d, 1w.");
+        }
+        // Jailing someone again only changes the time and reason; they still go back to where they were before.
+        ModerationManager.Jailed old = manager.jailed(target.id());
+        manager.setJailed(target.id(), new ModerationManager.Jailed(target.name(), System.currentTimeMillis() + ms, reason,
+                old == null ? null : old.back()));
+        ServerPlayer online = c.getSource().getServer().getPlayerList().getPlayer(target.id());
+        if (online != null) {
+            Jail.tick(online, manager); // move them in right away
+        }
+        return ok(c, target.name() + " is jailed for " + Durations.format(ms)
+                + (online == null ? " (offline: sent to jail when they join)." : "."));
+    }
+
+    private static int unjail(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        NameAndId target = single(c);
+        if (target == null) {
+            return 0;
+        }
+        ModerationManager manager = manager();
+        ModerationManager.Jailed jailed = manager.jailed(target.id());
+        if (jailed == null || !manager.isJailed(target.id())) {
+            return fail(c, target.name() + " is not jailed.");
+        }
+        ServerPlayer online = c.getSource().getServer().getPlayerList().getPlayer(target.id());
+        if (online != null) {
+            Jail.release(online, manager, jailed);
+        } else {
+            // End the sentence now; they are sent back to where they were when they next join.
+            manager.setJailed(target.id(), new ModerationManager.Jailed(jailed.name(), System.currentTimeMillis(), jailed.reason(), jailed.back()));
+        }
+        return ok(c, target.name() + " is out of jail.");
     }
 
     // ---------------------------------------------------------------- helpers

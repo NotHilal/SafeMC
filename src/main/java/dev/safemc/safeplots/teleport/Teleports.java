@@ -61,6 +61,9 @@ public final class Teleports {
 
     /** Starts a teleport (instantly for admins). {@code destination} is evaluated when the warm-up ends. */
     public static boolean start(ServerPlayer player, String what, Supplier<@Nullable Destination> destination) {
+        if (jailed(player)) {
+            return false;
+        }
         if (PlotManager.isAdmin(player)) {
             return finish(player, what, destination);
         }
@@ -81,6 +84,9 @@ public final class Teleports {
             player.sendSystemMessage(Component.literal("You can't teleport while frozen.").withStyle(ChatFormatting.RED));
             return false;
         }
+        if (jailed(player)) {
+            return false;
+        }
         Destination dest = destination.get();
         if (dest == null) {
             player.sendSystemMessage(Component.literal("Teleport cancelled: " + what + " is no longer available.").withStyle(ChatFormatting.RED));
@@ -91,6 +97,15 @@ public final class Teleports {
         LAST_TELEPORT.put(player.getUUID(), System.currentTimeMillis());
         player.sendSystemMessage(Component.literal("Teleported to " + what + ".").withStyle(ChatFormatting.GREEN));
         return true;
+    }
+
+    private static boolean jailed(ServerPlayer player) {
+        ModerationManager moderation = ModerationManager.get();
+        if (moderation != null && moderation.isJailed(player.getUUID())) {
+            player.sendSystemMessage(Component.literal("You can't teleport while in jail.").withStyle(ChatFormatting.RED));
+            return true;
+        }
+        return false;
     }
 
     public static Destination destinationOf(ServerPlayer player) {

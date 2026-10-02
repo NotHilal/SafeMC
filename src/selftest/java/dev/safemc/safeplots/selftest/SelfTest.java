@@ -12,6 +12,7 @@ import dev.safemc.safeplots.moderation.ModerationManager;
 import dev.safemc.safeplots.plot.Plot;
 import dev.safemc.safeplots.plot.PlotBorders;
 import dev.safemc.safeplots.plot.PlotManager;
+import dev.safemc.safeplots.world.Worlds;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,7 +71,8 @@ public final class SelfTest {
         NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent e) -> e.getDispatcher().register(Commands.literal("selftest")
                 .then(Commands.literal("setup").executes(c -> report(c, SelfTest::setup)))
                 .then(Commands.literal("check").executes(c -> report(c, SelfTest::check)))
-                .then(Commands.literal("persist").executes(c -> report(c, SelfTest::persist)))));
+                .then(Commands.literal("persist").executes(c -> report(c, SelfTest::persist)))
+                .then(Commands.literal("worlds").executes(c -> report(c, SelfTest::worlds)))));
     }
 
     private interface Body {
@@ -194,21 +196,21 @@ public final class SelfTest {
         click(admin, sign1, ItemStack.EMPTY);
         run(admin, "plot sign t_second");
         click(admin, sign2.below(), new ItemStack(Items.OAK_SIGN), Direction.UP);
-        expect(sign2.equals(second.sign()) && signLine(level, sign2).equals("AVAILABLE"), "placing a sign inside an unclaimed plot links it");
+        expect(sign2.equals(second.sign()) && signLine(level, sign2).contains("AVAILABLE"), "placing a sign inside an unclaimed plot links it");
         expect(sign1.equals(home.sign()), "admin linked sign by right-click");
         BlockPos support = new BlockPos(1036, Y + 2, 1001);
         level.setBlockAndUpdate(support, Blocks.STONE.defaultBlockState());
         run(admin, "plot sign t_exact");
         click(admin, support, new ItemStack(Items.OAK_HANGING_SIGN), Direction.DOWN);
-        expect(support.below().equals(exact.sign()) && signLine(level, support.below()).equals("AVAILABLE"), "hanging sign placed and linked");
+        expect(support.below().equals(exact.sign()) && signLine(level, support.below()).contains("AVAILABLE"), "hanging sign placed and linked");
         click(friend, support.below(), ItemStack.EMPTY);
-        expect(friend.getUUID().equals(exact.owner()) && signLine(level, support.below()).equals("CLAIMED"), "claim via hanging sign");
-        expect(signLine(level, sign1).equals("AVAILABLE"), "unclaimed sign shows AVAILABLE");
+        expect(friend.getUUID().equals(exact.owner()) && signLine(level, support.below()).contains("'s property"), "claim via hanging sign");
+        expect(signLine(level, sign1).contains("AVAILABLE"), "unclaimed sign shows AVAILABLE");
         expect(!home.isClaimed(), "linking click did not claim");
 
         click(owner, sign1, ItemStack.EMPTY);
         expect(owner.getUUID().equals(home.owner()), "owner claimed t_home by clicking sign");
-        expect(signLine(level, sign1).equals("CLAIMED"), "sign updated to CLAIMED");
+        expect(signLine(level, sign1).contains("'s property"), "sign updated to <owner>'s property");
         click(griefer, sign1, ItemStack.EMPTY);
         expect(owner.getUUID().equals(home.owner()), "second player can't take a claimed plot");
         click(owner, sign2, ItemStack.EMPTY);
@@ -561,14 +563,14 @@ public final class SelfTest {
         Plot home = pm.plot("t_home");
         owner.teleportTo(1004.5, Y, 1004.5);
         run(owner, "plot abandon");
-        expect(!home.isClaimed() && signLine(level, home.sign()).equals("AVAILABLE"), "/plot abandon frees plot and resets sign");
+        expect(!home.isClaimed() && signLine(level, home.sign()).contains("AVAILABLE"), "/plot abandon frees plot and resets sign");
         expect(level.getBlockState(p(1002, 1002)).is(Blocks.STONE), "abandon keeps the buildings");
         console(server, "plot setowner t_home Owner");
-        expect(owner.getUUID().equals(home.owner()) && signLine(level, home.sign()).equals("CLAIMED"), "/plot setowner works");
+        expect(owner.getUUID().equals(home.owner()) && signLine(level, home.sign()).contains("'s property"), "/plot setowner works");
         level.removeBlock(home.sign(), false);
         expect(owner.getUUID().equals(home.owner()), "plot stays claimed after sign destroyed");
         click(griefer, home.sign().below(), new ItemStack(Items.OAK_SIGN), Direction.UP);
-        expect(signLine(level, home.sign()).equals("CLAIMED"), "sign re-placed at the claim spot shows CLAIMED immediately");
+        expect(signLine(level, home.sign()).contains("'s property"), "sign re-placed at the claim spot shows the owner immediately");
         console(server, "plot delete t_exact");
         expect(pm.plot("t_exact") == null, "/plot delete works");
     }
@@ -581,6 +583,46 @@ public final class SelfTest {
         List<Grave> kept = GraveManager.get().ownedBy(UUIDUtil.createOfflinePlayerUUID("Victim2"));
         expect(kept.size() == 1 && kept.get(0).items().size() == 1
                 && "Excalibur".equals(kept.get(0).items().get(0).getHoverName().getString()), "grave and its named item survived restart");
+    }
+
+    // ------------------------------------------------------------------ /mv worlds (run twice: before and after a restart)
+
+    private static void worlds(MinecraftServer server, ServerLevel level, PlotManager pm) throws Exception {
+        Worlds worlds = Worlds.get();
+        if (worlds.world("st_normal") == null) {
+            console(server, "mv create st_normal normal 42");
+            console(server, "mv create st_void void");
+            ServerLevel created = worlds.level(worlds.world("st_normal"));
+            expect(created != null, "normal world created and loaded");
+            created.setBlockAndUpdate(new BlockPos(0, 300, 0), Blocks.GOLD_BLOCK.defaultBlockState());
+            results.add("     restart the server and run /selftest worlds again");
+            return;
+        }
+        ServerLevel normal = worlds.level(worlds.world("st_normal"));
+        expect(normal != null && normal.getSeed() == 42, "normal world reloaded after restart with its own seed");
+        expect(normal != null && normal.getBlockState(new BlockPos(0, 300, 0)).is(Blocks.GOLD_BLOCK), "block placed before restart is still there");
+
+        ServerPlayer walker = fakePlayer(server, "Walker");
+        console(server, "mvtp st_normal Walker");
+        BlockPos feet = walker.blockPosition();
+        expect(walker.level() == normal, "/mvtp sent the player to the world");
+        expect(walker.level().getBlockState(feet.below()).isFaceSturdy(walker.level(), feet.below(), Direction.UP)
+                && walker.level().getBlockState(feet).isAir(), "landed standing on solid ground at " + feet.toShortString());
+
+        console(server, "mvtp st_void Walker");
+        ServerLevel voidLevel = worlds.level(worlds.world("st_void"));
+        expect(walker.level() == voidLevel && voidLevel.getBlockState(walker.blockPosition().below()).is(Blocks.STONE),
+                "void world: landed on a generated stone platform");
+
+        console(server, "mvtp nether Walker");
+        expect(walker.level().dimension() == net.minecraft.world.level.Level.NETHER, "/mvtp nether works");
+        console(server, "mvtp st_void Walker");
+        console(server, "mv delete st_void confirm");
+        expect(walker.level() == server.overworld(), "deleting a world sends players in it to spawn");
+        expect(worlds.world("st_void") == null && server.getLevel(voidLevel.dimension()) == null, "deleted world is unloaded");
+        console(server, "mv delete st_normal confirm");
+        expect(worlds.worlds().isEmpty() || worlds.world("st_normal") == null, "cleanup");
+        server.getPlayerList().remove(walker);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -635,9 +677,13 @@ public final class SelfTest {
         }
     }
 
+    /** All front lines of a sign joined with spaces (empty lines skipped). */
     private static String signLine(ServerLevel level, BlockPos pos) {
-        return level.getBlockEntity(pos) instanceof SignBlockEntity sign
-                ? sign.getText(SignTextSlot.FRONT).getMessages(false).get(0).getString() : "<no sign>";
+        if (!(level.getBlockEntity(pos) instanceof SignBlockEntity sign)) {
+            return "<no sign>";
+        }
+        return sign.getText(SignTextSlot.FRONT).getMessages(false).stream()
+                .map(Component::getString).filter(s -> !s.isEmpty()).collect(java.util.stream.Collectors.joining(" "));
     }
 
     private static int countFluid(ServerLevel level, int x1, int x2, int z1, int z2) {
