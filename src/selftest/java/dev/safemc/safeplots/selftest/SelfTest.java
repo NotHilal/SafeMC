@@ -21,6 +21,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.UUIDUtil;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.PacketFlow;
@@ -72,7 +73,9 @@ public final class SelfTest {
                 .then(Commands.literal("setup").executes(c -> report(c, SelfTest::setup)))
                 .then(Commands.literal("check").executes(c -> report(c, SelfTest::check)))
                 .then(Commands.literal("persist").executes(c -> report(c, SelfTest::persist)))
-                .then(Commands.literal("worlds").executes(c -> report(c, SelfTest::worlds)))));
+                .then(Commands.literal("worlds").executes(c -> report(c, SelfTest::worlds)))
+                .then(Commands.literal("schem").executes(c -> report(c, SelfTest::schem)))
+                .then(Commands.literal("schembig").executes(c -> report(c, SelfTest::schemBig)))));
     }
 
     private interface Body {
@@ -400,15 +403,30 @@ public final class SelfTest {
         carol.connection.markClientLoaded();
         alice.teleportTo(1030.5, Y, 1015.5);
         run(alice, "sethome");
-        expect(HomeManager.get().home(alice.getUUID()) != null, "/sethome saves a home");
+        expect(HomeManager.get().home(alice.getUUID(), "home") != null, "/sethome saves a home");
         alice.teleportTo(1004.5, Y, 1004.5); // inside Owner's t_home
         run(alice, "sethome");
-        expect(HomeManager.get().home(alice.getUUID()).x() == 1004.5, "a home can be set anywhere, even in someone else's plot");
+        expect(HomeManager.get().home(alice.getUUID(), "home").x() == 1004.5, "a home can be set anywhere, even in someone else's plot");
         alice.teleportTo(1032.5, Y, 1015.5);
         run(alice, "sethome");
         alice.teleportTo(1030.5, Y, 1015.5);
         run(alice, "sethome");
-        expect(HomeManager.get().home(alice.getUUID()).x() == 1030.5, "a second /sethome moves the one home");
+        expect(HomeManager.get().home(alice.getUUID(), "home").x() == 1030.5
+                && HomeManager.get().homes(alice.getUUID()).size() == 1, "/sethome again moves the same home");
+        for (String n : new String[] {"Farm", "mine", "base2", "nether_hub"}) {
+            run(alice, "sethome " + n);
+        }
+        run(alice, "sethome sixth");
+        expect(HomeManager.get().homes(alice.getUUID()).size() == HomeManager.MAX_HOMES
+                && HomeManager.get().home(alice.getUUID(), "farm") != null
+                && HomeManager.get().home(alice.getUUID(), "sixth") == null, "5 named homes, not a 6th (names not case sensitive)");
+        run(alice, "delhome mine");
+        run(alice, "sethome sixth");
+        expect(HomeManager.get().home(alice.getUUID(), "mine") == null && HomeManager.get().home(alice.getUUID(), "sixth") != null,
+                "/delhome <name> frees a slot");
+        for (String n : new String[] {"farm", "base2", "nether_hub", "sixth"}) {
+            run(alice, "delhome " + n);
+        }
         alice.teleportTo(990.5, Y, 1025.5);
         run(alice, "home");
         expect(Teleports.isPending(alice.getUUID()) && alice.position().distanceTo(new Vec3(990.5, Y, 1025.5)) < 0.1,
@@ -436,6 +454,51 @@ public final class SelfTest {
         admin.teleportTo(990.5, Y, 1015.5);
         run(admin, "home");
         expect(admin.position().distanceTo(new Vec3(1044.5, Y, 1015.5)) < 0.1, "admins teleport instantly");
+
+        // ---- /plot claimhere: players make their own 50x50 plot
+        ServerPlayer settler = fakePlayer(server, "Settler");
+        ServerPlayer neighbor = fakePlayer(server, "Neighbor");
+        settler.teleportTo(3000.5, Y, 3000.5);
+        run(settler, "plot claimhere");
+        expect(pm.plotsOwnedBy(settler.getUUID()).isEmpty(), "/plot claimhere only shows the plot until /plot confirm");
+        run(settler, "plot confirm");
+        List<Plot> settled = pm.plotsOwnedBy(settler.getUUID());
+        expect(settled.size() == 1 && settled.getFirst().selfClaimed()
+                && settled.getFirst().min().equals(new BlockPos(2975, level.getMinY(), 2975))
+                && settled.getFirst().max().equals(new BlockPos(3024, level.getMaxY(), 3024)),
+                "/plot confirm makes a 50x50 full-height plot around the player");
+        expect(!pm.canModify(neighbor, level, new BlockPos(3010, Y, 3010)), "others can't build in a self-made plot");
+        settler.teleportTo(3500.5, Y, 3500.5);
+        pm.setMaxClaims(settler.getUUID(), 3);
+        run(settler, "plot claimhere");
+        run(settler, "plot confirm");
+        expect(pm.plotsOwnedBy(settler.getUUID()).size() == 1, "only one self-made plot per player, even with a higher limit");
+        pm.setMaxClaims(settler.getUUID(), 1);
+        neighbor.teleportTo(3059.5, Y, 3000.5); // its square would start at 3034: only 9 free blocks
+        run(neighbor, "plot claimhere");
+        run(neighbor, "plot confirm");
+        expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "a self-made plot needs a 10-block gap to other plots");
+        neighbor.teleportTo(3060.5, Y, 3000.5); // starts at 3035: exactly 10 free blocks
+        run(neighbor, "plot claimhere");
+        run(neighbor, "plot confirm");
+        expect(pm.plotsOwnedBy(neighbor.getUUID()).size() == 1, "exactly 10 free blocks is enough");
+        run(neighbor, "plot abandon");
+        neighbor.teleportTo(5000.5, Y, 5000.5);
+        pm.setMaxClaims(neighbor.getUUID(), 0);
+        run(neighbor, "plot claimhere");
+        run(neighbor, "plot confirm");
+        pm.setMaxClaims(neighbor.getUUID(), 1);
+        expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "self-made plots count toward the plot limit");
+        BlockPos spawn = server.getRespawnData().pos();
+        neighbor.teleportTo(spawn.getX() + 120.5, Y, spawn.getZ() + 0.5); // square reaches to 95 blocks from spawn
+        run(neighbor, "plot claimhere");
+        run(neighbor, "plot confirm");
+        expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "no self-made plots within 100 blocks of spawn");
+        String settledName = settled.getFirst().name();
+        settler.teleportTo(3000.5, Y, 3000.5);
+        run(settler, "plot abandon");
+        expect(pm.plot(settledName) == null && pm.plotsOwnedBy(settler.getUUID()).isEmpty(),
+                "abandoning a self-made plot deletes it");
 
         // ---- admin bypass
         BlockPos stone2 = p(1007, 1001);
@@ -616,6 +679,54 @@ public final class SelfTest {
 
         console(server, "mvtp nether Walker");
         expect(walker.level().dimension() == net.minecraft.world.level.Level.NETHER, "/mvtp nether works");
+
+        // ---- one inventory per group (main = world/nether/end; st_normal has its own)
+        console(server, "mvtp world Walker");
+        walker.getInventory().clearContent();
+        walker.getEnderChestInventory().clearContent();
+        walker.getInventory().setItem(0, new ItemStack(Items.DIAMOND, 3));
+        walker.getEnderChestInventory().setItem(0, new ItemStack(Items.EMERALD));
+        walker.setExperienceLevels(5);
+        console(server, "mvtp st_normal Walker");
+        expect(walker.getInventory().countItem(Items.DIAMOND) == 0 && walker.getEnderChestInventory().isEmpty() && walker.experienceLevel == 0,
+                "another group starts with an empty inventory, ender chest and XP");
+        walker.getInventory().setItem(0, new ItemStack(Items.DIRT, 7));
+        console(server, "mvtp nether Walker");
+        expect(walker.getInventory().countItem(Items.DIAMOND) == 3 && walker.getInventory().countItem(Items.DIRT) == 0
+                && walker.getEnderChestInventory().countItem(Items.EMERALD) == 1 && walker.experienceLevel == 5,
+                "nether shares the main inventory, ender chest and XP");
+        console(server, "mvtp st_normal Walker");
+        expect(walker.getInventory().countItem(Items.DIRT) == 7 && walker.getInventory().countItem(Items.DIAMOND) == 0,
+                "st_normal kept its own inventory");
+        console(server, "mv group st_normal main");
+        expect(walker.getInventory().countItem(Items.DIAMOND) == 3, "moving a world into group main swaps the players inside");
+        console(server, "mv group st_normal st_normal");
+        expect(walker.getInventory().countItem(Items.DIRT) == 7, "moving it back restores its own inventory");
+
+        ItemEntity thrown = new ItemEntity(normal, 0.5, 100, 0.5, new ItemStack(Items.DIAMOND));
+        normal.addFreshEntity(thrown);
+        expect(thrown.teleport(new net.minecraft.world.level.portal.TeleportTransition(server.overworld(), new Vec3(0.5, 100, 0.5),
+                Vec3.ZERO, 0, 0, net.minecraft.world.level.portal.TeleportTransition.DO_NOTHING)) == null,
+                "items can't travel to a world with another inventory");
+        thrown.discard();
+
+        // ---- portals
+        dev.safemc.safeplots.world.Portals portals = dev.safemc.safeplots.world.Portals.get();
+        portals.remove("st_gate");
+        portals.remove("st_np");
+        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_gate", "minecraft:overworld", 2000, Y, 2000, 2002, Y + 2, 2000, "st_normal", null));
+        console(server, "mvtp world Walker");
+        walker.teleportTo(server.overworld(), 2001.5, Y, 2000.5, java.util.Set.of(), 0, 0, true);
+        dev.safemc.safeplots.world.Portals.onPlayerTick(new net.neoforged.neoforge.event.tick.PlayerTickEvent.Post(walker));
+        expect(walker.level() == normal, "walking into a portal area sends the player to its world");
+        expect(walker.getInventory().countItem(Items.DIRT) == 7, "arriving by portal switches the inventory too");
+        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_np", "minecraft:overworld", 2010, Y, 2010, 2010, Y, 2010, "st_normal", null));
+        var transition = ((net.minecraft.world.level.block.Portal) Blocks.NETHER_PORTAL)
+                .getPortalDestination(server.overworld(), walker, new BlockPos(2010, Y, 2010));
+        expect(transition != null && transition.newLevel() == normal, "a nether portal inside a portal area leads to its world");
+        portals.remove("st_gate");
+        portals.remove("st_np");
+
         console(server, "mvtp st_void Walker");
         console(server, "mv delete st_void confirm");
         expect(walker.level() == server.overworld(), "deleting a world sends players in it to spawn");
@@ -623,6 +734,204 @@ public final class SelfTest {
         console(server, "mv delete st_normal confirm");
         expect(worlds.worlds().isEmpty() || worlds.world("st_normal") == null, "cleanup");
         server.getPlayerList().remove(walker);
+    }
+
+    // ------------------------------------------------------------------ /schem
+
+    private static void schem(MinecraftServer server, ServerLevel level, PlotManager pm) throws Exception {
+        dev.safemc.safeplots.schematic.Schematics manager = dev.safemc.safeplots.schematic.Schematics.get();
+        java.nio.file.Path dir = manager.dir();
+        int current = net.minecraft.SharedConstants.getCurrentVersion().dataVersion().version();
+
+        // v3: 3 x 2 x 2, Offset (1, 0, 0). Row z=0: stone, stairs (north), chest with 5 diamonds; (0,0,1) stone.
+        CompoundTag v3 = new CompoundTag();
+        v3.putInt("Version", 3);
+        v3.putInt("DataVersion", current);
+        v3.putShort("Width", (short) 3);
+        v3.putShort("Height", (short) 2);
+        v3.putShort("Length", (short) 2);
+        v3.putIntArray("Offset", new int[] {1, 0, 0});
+        CompoundTag blocks = new CompoundTag();
+        CompoundTag palette = new CompoundTag();
+        palette.putInt("minecraft:air", 0);
+        palette.putInt("minecraft:stone", 1);
+        palette.putInt("minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]", 2);
+        palette.putInt("minecraft:chest[facing=north,type=single,waterlogged=false]", 3);
+        blocks.put("Palette", palette);
+        blocks.putByteArray("Data", new byte[] {1, 2, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+        CompoundTag item = new CompoundTag();
+        item.putByte("Slot", (byte) 0);
+        item.putString("id", "minecraft:diamond");
+        item.putInt("count", 5);
+        net.minecraft.nbt.ListTag items = new net.minecraft.nbt.ListTag();
+        items.add(item);
+        CompoundTag chestData = new CompoundTag();
+        chestData.put("Items", items);
+        CompoundTag chest = new CompoundTag();
+        chest.putIntArray("Pos", new int[] {2, 0, 0});
+        chest.putString("Id", "minecraft:chest");
+        chest.put("Data", chestData);
+        net.minecraft.nbt.ListTag bes = new net.minecraft.nbt.ListTag();
+        bes.add(chest);
+        blocks.put("BlockEntities", bes);
+        v3.put("Blocks", blocks);
+        CompoundTag root = new CompoundTag();
+        root.put("Schematic", v3);
+        net.minecraft.nbt.NbtIo.writeCompressed(root, dir.resolve("st_house.schem"));
+
+        // v2 from 1.16.5: one grass_path (renamed dirt_path since), WorldEdit offset -1 on X.
+        CompoundTag v2 = new CompoundTag();
+        v2.putInt("Version", 2);
+        v2.putInt("DataVersion", 2586);
+        v2.putShort("Width", (short) 1);
+        v2.putShort("Height", (short) 1);
+        v2.putShort("Length", (short) 1);
+        CompoundTag p2 = new CompoundTag();
+        p2.putInt("minecraft:grass_path", 0);
+        v2.put("Palette", p2);
+        v2.putByteArray("BlockData", new byte[] {0});
+        CompoundTag meta = new CompoundTag();
+        meta.putInt("WEOffsetX", -1);
+        meta.putInt("WEOffsetY", 0);
+        meta.putInt("WEOffsetZ", 0);
+        v2.put("Metadata", meta);
+        java.nio.file.Files.createDirectories(dir.resolve("old"));
+        net.minecraft.nbt.NbtIo.writeCompressed(v2, dir.resolve("old/st_path.schem"));
+
+        CompoundTag legacy = new CompoundTag();
+        legacy.putShort("Width", (short) 1);
+        legacy.putShort("Height", (short) 1);
+        legacy.putShort("Length", (short) 1);
+        legacy.putString("Materials", "Alpha");
+        net.minecraft.nbt.NbtIo.writeCompressed(legacy, dir.resolve("st_legacy.schematic"));
+
+        expect(manager.available().containsAll(List.of("st_house", "old/st_path", "st_legacy")), "/schem list finds files, also in subfolders");
+        expect(manager.resolve("../safeplots.json") == null && manager.resolve("st_house") != null, "names can't leave the schematics folder");
+        boolean refused = false;
+        try {
+            dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_legacy"), "st_legacy", server.registryAccess(), 1000);
+        } catch (java.io.IOException e) {
+            refused = e.getMessage().contains("MCEdit");
+        }
+        expect(refused, "old MCEdit .schematic files are refused with an explanation");
+
+        var house = dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_house"), "st_house", server.registryAccess(), 1000);
+        expect(house.width() == 3 && house.height() == 2 && house.length() == 2 && house.blockEntities().size() == 1, "v3 schematic read");
+        var path = dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("old/st_path"), "st_path", server.registryAccess(), 1000);
+        expect(path.palette()[0].is(Blocks.DIRT_PATH), "1.16 grass_path upgraded to dirt_path");
+
+        ServerPlayer builder = fakePlayer(server, "Builder");
+        BlockPos at = new BlockPos(3000, Y, 3000);
+        builder.teleportTo(level, at.getX() + 0.5, at.getY(), at.getZ() + 0.5, java.util.Set.of(), 0, 0, true);
+        for (int dx = -2; dx <= 4; dx++) {
+            for (int dz = -1; dz <= 3; dz++) {
+                for (int dy = 0; dy <= 1; dy++) {
+                    level.setBlockAndUpdate(at.offset(dx, dy, dz), Blocks.GLASS.defaultBlockState());
+                }
+            }
+        }
+
+        manager.setClipboard(builder.getUUID(), house);
+        manager.paste(builder, manager.clipboard(builder.getUUID()), at, false, n -> {});
+        manager.finishAll();
+        expect(level.getBlockState(at.offset(1, 0, 0)).is(Blocks.STONE) && level.getBlockState(at.offset(1, 0, 1)).is(Blocks.STONE),
+                "pasted with the schematic's offset");
+        expect(level.getBlockState(at.offset(2, 0, 0)).is(Blocks.OAK_STAIRS)
+                && level.getBlockState(at.offset(2, 0, 0)).getValue(net.minecraft.world.level.block.StairBlock.FACING) == Direction.NORTH,
+                "block states (stairs facing) kept");
+        expect(level.getBlockEntity(at.offset(3, 0, 0)) instanceof net.minecraft.world.level.block.entity.ChestBlockEntity c
+                && c.getItem(0).is(Items.DIAMOND) && c.getItem(0).getCount() == 5, "chest contents pasted");
+        expect(level.getBlockState(at.offset(1, 1, 0)).isAir(), "air in the schematic replaces blocks");
+
+        manager.undo(builder.getUUID(), n -> {});
+        manager.finishAll();
+        expect(level.getBlockState(at.offset(1, 0, 0)).is(Blocks.GLASS) && level.getBlockState(at.offset(3, 0, 0)).is(Blocks.GLASS)
+                && level.getBlockState(at.offset(1, 1, 0)).is(Blocks.GLASS), "undo restores what was there");
+        expect(level.getBlockEntity(at.offset(3, 0, 0)) == null, "undo removes pasted block entities");
+
+        manager.rotate(builder.getUUID(), net.minecraft.world.level.block.Rotation.CLOCKWISE_90);
+        manager.paste(builder, manager.clipboard(builder.getUUID()), at, true, n -> {});
+        manager.finishAll();
+        // Clockwise 90: (x, y, z) -> (-z, y, x)
+        expect(level.getBlockState(at.offset(0, 0, 1)).is(Blocks.STONE) && level.getBlockState(at.offset(-1, 0, 1)).is(Blocks.STONE),
+                "rotated paste lands turned 90° clockwise");
+        expect(level.getBlockState(at.offset(0, 0, 2)).is(Blocks.OAK_STAIRS)
+                && level.getBlockState(at.offset(0, 0, 2)).getValue(net.minecraft.world.level.block.StairBlock.FACING) == Direction.EAST,
+                "rotated stairs face east instead of north");
+        expect(level.getBlockState(at.offset(0, 1, 1)).is(Blocks.GLASS), "paste noair leaves existing blocks where the schematic has air");
+        manager.undo(builder.getUUID(), n -> {});
+        manager.finishAll();
+        expect(level.getBlockState(at.offset(0, 0, 1)).is(Blocks.GLASS), "second undo works too");
+
+        manager.setClipboard(builder.getUUID(), path);
+        manager.paste(builder, manager.clipboard(builder.getUUID()), at, false, n -> {});
+        manager.finishAll();
+        expect(level.getBlockState(at.offset(-1, 0, 0)).is(Blocks.DIRT_PATH), "v2 WorldEdit offset honoured");
+        manager.undo(builder.getUUID(), n -> {});
+        manager.finishAll();
+
+        // Speed: a 64 x 64 x 64 checkerboard of stone and planks (262k blocks), all set from scratch.
+        int n = 64 * 64 * 64;
+        int[] cells = new int[n];
+        for (int i = 0; i < n; i++) {
+            cells[i] = i % 2;
+        }
+        var big = new dev.safemc.safeplots.schematic.Schematic("st_big", 64, 64, 64, BlockPos.ZERO,
+                new net.minecraft.world.level.block.state.BlockState[] {Blocks.STONE.defaultBlockState(), Blocks.OAK_PLANKS.defaultBlockState()},
+                cells, java.util.Map.of(), 0, 0);
+        manager.setClipboard(builder.getUUID(), big);
+        BlockPos bigAt = new BlockPos(3200, Y, 3200);
+        long t0 = System.nanoTime();
+        manager.paste(builder, manager.clipboard(builder.getUUID()), bigAt, false, x -> {});
+        manager.finishAll();
+        long pasteMs = (System.nanoTime() - t0) / 1_000_000;
+        expect(level.getBlockState(bigAt.offset(63, 63, 63)).is(Blocks.STONE) || level.getBlockState(bigAt.offset(63, 63, 63)).is(Blocks.OAK_PLANKS),
+                "big paste finished");
+        t0 = System.nanoTime();
+        manager.undo(builder.getUUID(), x -> {});
+        manager.finishAll();
+        long undoMs = (System.nanoTime() - t0) / 1_000_000;
+        results.add("info 262k blocks: paste " + pasteMs + " ms, undo " + undoMs + " ms (spread over ticks at 25 ms per tick)");
+
+        java.nio.file.Files.deleteIfExists(dir.resolve("st_house.schem"));
+        java.nio.file.Files.deleteIfExists(dir.resolve("old/st_path.schem"));
+        java.nio.file.Files.deleteIfExists(dir.resolve("old"));
+        java.nio.file.Files.deleteIfExists(dir.resolve("st_legacy.schematic"));
+        server.getPlayerList().remove(builder);
+    }
+
+    /** Times a 296 x 131 x 304 paste (11.8M blocks, mostly air above a solid base) and its undo. Slow; run by hand. */
+    private static void schemBig(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        dev.safemc.safeplots.schematic.Schematics manager = dev.safemc.safeplots.schematic.Schematics.get();
+        int w = 296, h = 131, l = 304;
+        int[] cells = new int[w * h * l];
+        for (int i = 0; i < cells.length; i++) {
+            int y = i / (w * l);
+            cells[i] = y < 20 ? 1 + (i % 2) : 0; // 20 solid layers, then air like a typical build's sky
+        }
+        var big = new dev.safemc.safeplots.schematic.Schematic("st_huge", w, h, l, BlockPos.ZERO,
+                new net.minecraft.world.level.block.state.BlockState[] {Blocks.AIR.defaultBlockState(),
+                        Blocks.STONE.defaultBlockState(), Blocks.OAK_PLANKS.defaultBlockState()},
+                cells, java.util.Map.of(), 0, 0);
+        ServerPlayer builder = fakePlayer(server, "Builder");
+        manager.setClipboard(builder.getUUID(), big);
+        BlockPos at = new BlockPos(5000, Y - 1, 5000);
+        Runtime rt = Runtime.getRuntime();
+        long t0 = System.nanoTime();
+        manager.paste(builder, manager.clipboard(builder.getUUID()), at, false, x -> results.add("info changed " + x + " blocks"));
+        manager.finishAll();
+        long pasteMs = (System.nanoTime() - t0) / 1_000_000;
+        long usedMb = (rt.totalMemory() - rt.freeMemory()) / 1_048_576;
+        expect(level.getBlockState(at.offset(295, 0, 303)).is(Blocks.STONE) || level.getBlockState(at.offset(295, 0, 303)).is(Blocks.OAK_PLANKS),
+                "11.8M-block paste finished");
+        t0 = System.nanoTime();
+        manager.undo(builder.getUUID(), x -> {});
+        manager.finishAll();
+        long undoMs = (System.nanoTime() - t0) / 1_000_000;
+        expect(level.getBlockState(at.offset(295, 0, 303)).is(Blocks.GRASS_BLOCK) || !level.getBlockState(at.offset(295, 0, 303)).is(Blocks.OAK_PLANKS),
+                "11.8M-block undo finished");
+        results.add("info paste " + pasteMs + " ms, undo " + undoMs + " ms of work, heap in use " + usedMb + " MB of " + rt.maxMemory() / 1_048_576 + " MB");
+        server.getPlayerList().remove(builder);
     }
 
     // ------------------------------------------------------------------ helpers

@@ -8,7 +8,7 @@ import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
-/** A rectangular, admin-defined region. Bounds are inclusive block coordinates. */
+/** A rectangular region, made by an admin or by a player with /plot claimhere. Bounds are inclusive block coordinates. */
 public final class Plot {
     private final String name;
     private final String dimension;
@@ -17,6 +17,8 @@ public final class Plot {
     private final Set<UUID> trusted = new LinkedHashSet<>();
     private @Nullable BlockPos sign;
     private DyeColor signColor = DyeColor.WHITE;
+    /** Made by its owner with /plot claimhere (no sign; deleted rather than freed when abandoned). */
+    private boolean selfClaimed;
 
     public Plot(String name, String dimension, BlockPos a, BlockPos b) {
         this.name = name;
@@ -121,6 +123,14 @@ public final class Plot {
 
     public void setSignColor(DyeColor signColor) {
         this.signColor = signColor;
+    }
+
+    public boolean selfClaimed() {
+        return selfClaimed;
+    }
+
+    public void setSelfClaimed(boolean selfClaimed) {
+        this.selfClaimed = selfClaimed;
     }
 
     public String describeBounds() {

@@ -55,6 +55,9 @@ final class PlotStore {
                 if (o.has("sign") && !o.get("sign").isJsonNull()) {
                     plot.setSign(readPos(o, "sign"));
                 }
+                if (o.has("selfClaimed")) {
+                    plot.setSelfClaimed(o.get("selfClaimed").getAsBoolean());
+                }
                 if (o.has("signColor")) {
                     plot.setSignColor(DyeColor.byName(o.get("signColor").getAsString(), DyeColor.WHITE));
                 }
@@ -93,6 +96,9 @@ final class PlotStore {
             o.add("trusted", trusted);
             o.add("sign", plot.sign() == null ? null : writePos(plot.sign()));
             o.addProperty("signColor", plot.signColor().getSerializedName());
+            if (plot.selfClaimed()) {
+                o.addProperty("selfClaimed", true);
+            }
             plotsJson.add(plot.name(), o);
         }
         root.add("plots", plotsJson);

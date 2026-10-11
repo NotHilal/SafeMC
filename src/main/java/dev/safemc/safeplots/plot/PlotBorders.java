@@ -77,7 +77,7 @@ public final class PlotBorders {
         hide(event.getEntity().getUUID());
     }
 
-    private static void draw(ServerPlayer player, Plot plot) {
+    static void draw(ServerPlayer player, Plot plot) {
         if (!plot.dimension().equals(PlotManager.dimensionId(player.level()))) {
             return;
         }

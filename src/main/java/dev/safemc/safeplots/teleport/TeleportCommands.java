@@ -1,30 +1,43 @@
 package dev.safemc.safeplots.teleport;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.safemc.safeplots.moderation.Vanish;
 import dev.safemc.safeplots.plot.PlotManager;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
-/** /sethome, /home, /delhome (one home per player), /tpa, /tpahere, /tpaccept, /tpdeny. */
+/** /sethome, /home, /delhome, /homes (up to 5 named homes per player), /tpa, /tpahere, /tpaccept, /tpdeny. */
 public final class TeleportCommands {
     private TeleportCommands() {}
 
     public static void register(CommandDispatcher<CommandSourceStack> d) {
-        d.register(Commands.literal("sethome").executes(TeleportCommands::setHome));
-        d.register(Commands.literal("home").executes(TeleportCommands::home));
-        d.register(Commands.literal("delhome").executes(TeleportCommands::delHome));
+        d.register(Commands.literal("sethome").executes(c -> setHome(c, null))
+                .then(Commands.argument("name", StringArgumentType.word()).executes(c -> setHome(c, StringArgumentType.getString(c, "name")))));
+        d.register(Commands.literal("home").executes(c -> home(c, null))
+                .then(Commands.argument("name", StringArgumentType.word()).suggests(TeleportCommands::suggestHomes)
+                        .executes(c -> home(c, StringArgumentType.getString(c, "name")))));
+        d.register(Commands.literal("delhome").executes(c -> delHome(c, null))
+                .then(Commands.argument("name", StringArgumentType.word()).suggests(TeleportCommands::suggestHomes)
+                        .executes(c -> delHome(c, StringArgumentType.getString(c, "name")))));
+        d.register(Commands.literal("homes").executes(TeleportCommands::listHomes));
 
         d.register(Commands.literal("tpa")
                 .then(Commands.argument("player", EntityArgument.player()).executes(c -> request(c, false))));
@@ -38,30 +51,111 @@ public final class TeleportCommands {
                 .then(Commands.argument("player", EntityArgument.player()).executes(c -> answer(c, false, true))));
     }
 
-    // ---------------------------------------------------------------- home (one per player)
+    // ---------------------------------------------------------------- homes (up to 5 per player)
 
-    private static int setHome(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+    private static int setHome(CommandContext<CommandSourceStack> c, @Nullable String given) throws CommandSyntaxException {
         ServerPlayer player = c.getSource().getPlayerOrException();
-        boolean replaced = homes().setHome(player.getUUID(), new HomeManager.Home(PlotManager.dimensionId(player.level()),
+        String name = given == null ? HomeManager.DEFAULT_NAME : HomeManager.normalize(given);
+        if (name == null) {
+            return fail(c, "Home names are 1-16 letters, digits, _ or -.");
+        }
+        HomeManager.SetResult result = homes().setHome(player.getUUID(), name, new HomeManager.Home(PlotManager.dimensionId(player.level()),
                 player.getX(), player.getY(), player.getZ(), player.getYRot(), player.getXRot()));
-        return ok(c, (replaced ? "Home moved here." : "Home set.") + " Use /home to come back.");
+        String back = name.equals(HomeManager.DEFAULT_NAME) ? "/home" : "/home " + name;
+        return switch (result) {
+            case SET -> ok(c, "Home \"" + name + "\" set (" + homes().homes(player.getUUID()).size() + "/" + HomeManager.MAX_HOMES
+                    + "). Use " + back + " to come back.");
+            case MOVED -> ok(c, "Home \"" + name + "\" moved here. Use " + back + " to come back.");
+            case LIMIT -> fail(c, "You already have " + HomeManager.MAX_HOMES + " homes (" + names(player)
+                    + "). Move one with /sethome <name> or delete one with /delhome <name>.");
+        };
     }
 
-    private static int home(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+    private static int home(CommandContext<CommandSourceStack> c, @Nullable String given) throws CommandSyntaxException {
         ServerPlayer player = c.getSource().getPlayerOrException();
-        HomeManager.Home home = homes().home(player.getUUID());
-        if (home == null) {
-            return fail(c, "You don't have a home yet. Set it with /sethome.");
+        String name = resolve(c, player, given, "home");
+        if (name == null) {
+            return 0;
         }
-        return Teleports.start(player, "your home", () -> {
+        HomeManager.Home home = homes().home(player.getUUID(), name);
+        return Teleports.start(player, name.equals(HomeManager.DEFAULT_NAME) ? "your home" : "home " + name, () -> {
             ServerLevel level = PlotManager.get() == null ? null : PlotManager.get().level(home.dimension());
             return level == null ? null : new Teleports.Destination(level, new Vec3(home.x(), home.y(), home.z()), home.yRot(), home.xRot());
         }) ? 1 : 0;
     }
 
-    private static int delHome(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+    private static int delHome(CommandContext<CommandSourceStack> c, @Nullable String given) throws CommandSyntaxException {
         ServerPlayer player = c.getSource().getPlayerOrException();
-        return homes().deleteHome(player.getUUID()) ? ok(c, "Home deleted.") : fail(c, "You don't have a home.");
+        String name = resolve(c, player, given, "delhome");
+        if (name == null) {
+            return 0;
+        }
+        homes().deleteHome(player.getUUID(), name);
+        return ok(c, "Home \"" + name + "\" deleted.");
+    }
+
+    private static int listHomes(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        Map<String, HomeManager.Home> mine = homes().homes(player.getUUID());
+        if (mine.isEmpty()) {
+            return fail(c, "You don't have a home yet. Set one with /sethome [name].");
+        }
+        MutableComponent msg = Component.literal("Your homes (" + mine.size() + "/" + HomeManager.MAX_HOMES + "): ").withStyle(ChatFormatting.GREEN);
+        boolean first = true;
+        for (Map.Entry<String, HomeManager.Home> e : mine.entrySet()) {
+            if (!first) {
+                msg.append(Component.literal(", ").withStyle(ChatFormatting.GREEN));
+            }
+            first = false;
+            HomeManager.Home h = e.getValue();
+            String where = h.dimension() + " " + (int) Math.floor(h.x()) + " " + (int) Math.floor(h.y()) + " " + (int) Math.floor(h.z());
+            msg.append(Component.literal(e.getKey()).withStyle(s -> s.withColor(ChatFormatting.AQUA).withUnderlined(true)
+                    .withClickEvent(new ClickEvent.RunCommand("/home " + e.getKey()))
+                    .withHoverEvent(new HoverEvent.ShowText(Component.literal(where + "\nClick to go there")))));
+        }
+        c.getSource().sendSuccess(() -> msg, false);
+        return mine.size();
+    }
+
+    /**
+     * The home a command means: the given name, or with no name "home", or the player's only home.
+     * Sends the error and returns null if there is no such home.
+     */
+    private static @Nullable String resolve(CommandContext<CommandSourceStack> c, ServerPlayer player, @Nullable String given, String command) {
+        Map<String, HomeManager.Home> mine = homes().homes(player.getUUID());
+        if (mine.isEmpty()) {
+            fail(c, "You don't have a home yet. Set one with /sethome [name].");
+            return null;
+        }
+        if (given != null) {
+            String name = HomeManager.normalize(given);
+            if (name == null || !mine.containsKey(name)) {
+                fail(c, "You don't have a home called \"" + given + "\". Your homes: " + names(player) + ".");
+                return null;
+            }
+            return name;
+        }
+        if (mine.containsKey(HomeManager.DEFAULT_NAME)) {
+            return HomeManager.DEFAULT_NAME;
+        }
+        if (mine.size() == 1) {
+            return mine.keySet().iterator().next();
+        }
+        fail(c, "Which one? Your homes: " + names(player) + ". Add the name, e.g. /" + command + " " + mine.keySet().iterator().next() + ".");
+        return null;
+    }
+
+    private static String names(ServerPlayer player) {
+        return String.join(", ", homes().homes(player.getUUID()).keySet());
+    }
+
+    private static CompletableFuture<Suggestions> suggestHomes(CommandContext<CommandSourceStack> c, SuggestionsBuilder b) {
+        ServerPlayer player = c.getSource().getPlayer();
+        HomeManager manager = HomeManager.get();
+        if (player == null || manager == null) {
+            return b.buildFuture();
+        }
+        return SharedSuggestionProvider.suggest(manager.homes(player.getUUID()).keySet(), b);
     }
 
     // ---------------------------------------------------------------- tpa

@@ -43,11 +43,13 @@ Admin means operator permission level 2 or higher (the default `/op` level is 4)
 
 | Command | What it does |
 |---|---|
+| `/plot claimhere` | Shows the 50x50 plot you'd get around where you stand (see [Making your own plot](#making-your-own-plot-players)) |
+| `/plot confirm` | Claims the plot `/plot claimhere` showed (within 30 s) |
 | `/plot trust <player> [plot]` | Lets a player build in your plot |
 | `/plot untrust <player> [plot]` | Removes that access |
-| `/plot abandon [plot]` | Gives up your plot. The buildings stay exactly as they are |
+| `/plot abandon [plot]` | Gives up your plot. The buildings stay exactly as they are. A plot you made yourself is deleted, so you can claim a new one |
 | `/plot movesign [plot]` | Moves your plot's claim sign: place a sign inside your plot, or right-click one that's already there. The old sign is blanked |
-| `/plot cancel` | Stops moving (or, for admins, linking) a sign |
+| `/plot cancel` | Cancels a `/plot claimhere` that isn't confirmed yet, or stops moving (or, for admins, linking) a sign |
 | `/ppt help` (or just `/ppt`) | Lists every command you can use; admins also see the admin and moderation commands. Click a line to type it |
 | `/mvtp <world>` | Teleports you to another world (see [Extra worlds](#extra-worlds-mv-mvtp)) |
 | `/plot showlimits [plot]` | Outlines the plot's borders with glowing particles (only you see them). Run it again to hide them. Admins can show any plot |
@@ -129,6 +131,27 @@ If both checks pass, you get `✓ Plot claimed: house_01` and the sign changes t
 The owner can change the sign's text color by right-clicking it with any dye (one dye is used up). The color is
 saved with the plot and stays when the sign is moved or replaced.
 
+## Making your own plot (players)
+
+Players don't need an admin or a sign: stand in the middle of the land you want and run `/plot claimhere`.
+
+1. A glowing border shows the plot you'd get: a **50x50** square centered on you, from bedrock to the
+   build limit (so nobody can dig under or build over it).
+2. Click **[Confirm]** or type `/plot confirm` within 30 seconds. To move it, walk somewhere else and run
+   `/plot claimhere` again; `/plot cancel` drops it.
+3. The plot is protected like any other: trust friends with `/plot trust`, see the border with `/plot showlimits`.
+
+Rules:
+
+- **One** self-made plot per player, and it counts toward the normal claim limit (1 by default), so a player
+  who already owns a sign plot can't make one unless an admin raises their limit.
+- At least **10 free blocks** between it and any other plot.
+- Not within **100 blocks of a world's spawn** (the main world's spawn, an `/mv` world's spawn, or 0,0 in the
+  Nether and End). Jailed players can't claim.
+- `/plot abandon` deletes a self-made plot (the buildings stay, unprotected), so the player can claim again
+  somewhere else. Admins manage them like any plot: `/plot info`, `/plot delete`, `/plot setowner`, `/plot redefine`.
+- It's named after the player (e.g. `Steve`, or `Steve_2` if that's taken).
+
 ## Claim limits
 
 Each player has a single number, `maxClaims`, which starts at **1**. There's no upper limit.
@@ -192,9 +215,10 @@ left on the ground for others to take.
 
 | Command | What it does |
 |---|---|
-| `/sethome` | Saves your current spot as your home. Everyone has **one** home; running it again moves it. Works anywhere |
-| `/home` | Teleports to your home |
-| `/delhome` | Deletes your home |
+| `/sethome [name]` | Saves your current spot as a home. Everyone can have **5** homes; using a name you already have moves that home. Without a name it's called `home`. Works anywhere |
+| `/home [name]` | Teleports to that home. Without a name: to `home`, or to your only home |
+| `/homes` | Lists your homes; click one to go there |
+| `/delhome [name]` | Deletes a home (without a name, the same one `/home` would pick) |
 | `/tpa <player>` | Asks to teleport to a player; they get clickable [Accept] [Deny] buttons |
 | `/tpahere <player>` | Asks a player to teleport to you |
 | `/tpaccept [player]`, `/tpdeny [player]` | Answers the newest request (or the one from that player). Requests expire after 60 s |
@@ -202,6 +226,7 @@ left on the ground for others to take.
 Every teleport has a **3 second warm-up** that is cancelled if you move or take damage (so it can't be
 used to escape a fight or a creeper), then a **30 second cooldown**. Admins teleport instantly. Frozen
 players can't teleport. Homes are stored in `<world>/safeplots-homes.json`.
+Names are 1-16 letters, digits, `_` or `-`, not case sensitive. Homes from the one-home version are kept as `home`.
 
 ### Moderation tools
 
@@ -257,8 +282,15 @@ Admins can add worlds while the server runs, like Multiverse. Each one is a norm
 | Command | What it does |
 |---|---|
 | `/mv create <name> <type> [seed]` | Creates and loads a world. Types: `normal`, `amplified`, `large_biomes`, `flat`, `void`, `nether`, `end`. No seed = random; a word is hashed like on the vanilla create-world screen |
+| `/mv import <name> <folder> [type] [seed]` | Turns a world save from `<server>/imports/<folder>` into a world (see below) |
 | `/mv list` | Lists the worlds (also just `/mv`) |
 | `/mv setspawn` | Sets the spawn of the world you're in |
+| `/mv group` | Lists the inventory groups (see [Inventories per world](#inventories-per-world)) |
+| `/mv group <world> <group>` | Puts a world in an inventory group (`main` = the main world's inventory) |
+| `/mv portal create <name> <world>` | Turns the selected area into a portal to that world (see [Portals](#portals)) |
+| `/mv portal setdest <name>` | The portal now lands players exactly where you stand (any world) |
+| `/mv portal delete <name>` | Removes the portal. Blocks are not changed |
+| `/mv portal list` | Lists portals (also just `/mv portal`) |
 | `/mv delete <name> confirm` | Unloads the world and deletes its folder. Players inside are sent to the main spawn |
 | `/mvtp <world>` | **Everyone**: goes to a world's spawn, with the usual 3 s warm-up and cooldown. `world`, `nether` and `end` are the vanilla dimensions |
 | `/mvtp <world> <player>` | Admin: sends a player there instantly |
@@ -267,10 +299,76 @@ The first visit picks a safe spot near 0,0 as the spawn (a void world gets a sma
 are listed in `<world>/safeplots-worlds.json` and stored in `<world>/dimensions/safeplots/<name>/`; they load at
 startup before anyone can join. Plots, homes, graves and no-spawn zones work in them like anywhere else.
 
+**Importing a map:** while the server runs, copy the world folder (the one with `level.dat` inside, e.g. from
+`.minecraft/saves/` or a downloaded map zip) into `<server>/imports/`, then run
+`/mv import <name> <folder>`. Use quotes for folder names with spaces: `/mv import castle "Epic Castle"`.
+Only the overworld of the save is imported. The map's own seed and spawn point are kept, so new terrain past
+its edges matches. For maps that should have nothing around them, add `void`: `/mv import castle "Epic Castle" void`.
+Copying runs in the background; you get a message when it's ready. Maps from older Minecraft versions are
+upgraded as their chunks load (make a backup first); maps from newer versions are refused. The folder in
+`imports/` is left untouched and can be deleted afterwards.
+
+#### Portals
+
+Select an area with the plot wand (or `/plot pos1` / `/plot pos2`), then `/mv portal create <name> <world>`.
+`<world>` is `world`, `nether`, `end` or any `/mv` world. The portal leads to that world's spawn; stand somewhere
+and run `/mv portal setdest <name>` to land there instead (e.g. next to a return portal).
+
+- **Nether or End portal blocks inside the area** keep everything vanilla (swirl, sound, the 4 s wait) but lead
+  to the portal's world. Build a normal obsidian portal, light it, select it, done.
+- **Anywhere else in the area** (any decorative gate, no portal blocks needed), walking in teleports you
+  right away, with no warm-up.
+- Arriving inside another portal's area doesn't send you on; step out and back in to use it.
+- Jailed players can't use portals. Nether/End portals outside any portal area work as before.
+
+#### Inventories per world
+
+Every world is in an **inventory group**, and each group has its own inventory, armor, offhand, ender chest,
+XP, health, hunger, effects and game mode. `world`, `nether` and `end` are always in group `main`; each `/mv`
+world starts in a group of its own (named after it). Put worlds together with `/mv group`, e.g. an extra world
+and its own nether: `/mv group skyblock_nether skyblock`.
+
+- The switch happens whenever you arrive in a world of another group: portals, `/mvtp`, `/home`, `/tpa`,
+  respawning, logging in. Your first visit to a group starts empty, with full health and the server's default
+  game mode.
+- Logging out keeps the inventory of the world you are in.
+- Moving a world to another group switches the players inside right away. Nothing is lost; moving it back
+  brings the old inventories back.
+- Items, minecarts, animals etc. can't go through a portal into a world of another group (otherwise things
+  could be thrown across). Get off your boat or horse before using such a portal.
+- Graves stay in their world: open yours there to get the items back.
+- Stored in `<world>/safeplots-inventories/<uuid>.dat`. Deleting a world keeps its group's inventories.
+- Players who were already on the server keep what they carry as the inventory of the world they're in.
+
 - Time and weather follow the main world.
-- Nether/End portals inside an extra world lead to the main Nether/End.
+- Nether/End portals inside an extra world lead to the main Nether/End (and so switch to the `main` inventory), unless they are inside a `/mv portal` area.
 - A player who was offline inside a world when it was deleted logs back in at the same coordinates in
   the main world.
+
+### Schematics (/schem)
+
+Paste buildings from `.schem` files without WorldEdit. Admins only. Put the files in `<server>/schematics/`
+(subfolders are fine: `/schem load houses/tower`). Files from WorldEdit 7+, FAWE, Axiom and most schematic
+websites use this format (Sponge schematic, versions 1-3).
+
+| Command | What it does |
+|---|---|
+| `/schem list` | Lists the files (also just `/schem`) |
+| `/schem load <name>` | Loads one into your clipboard. Use quotes for names with spaces |
+| `/schem info` | Size, rotation, and the area it would cover if pasted where you stand |
+| `/schem rotate <degrees>` | Turns the clipboard 90, 180, 270 (or -90) degrees clockwise, seen from above. Adds up |
+| `/schem paste` | Pastes where you stand, the same way WorldEdit would place it. Air in the schematic replaces blocks |
+| `/schem paste noair` | Same, but keeps existing blocks where the schematic has air |
+| `/schem undo` | Puts back everything your last paste changed, including chest contents. Up to your last 5 pastes can be undone (fewer for very big builds, to save memory) |
+
+- Blocks appear without physics: sand doesn't fall, water doesn't flow and torches don't drop while the
+  build is placed. Chests, signs, banners etc. keep their contents.
+- Big builds are placed over several ticks so the server doesn't freeze (about 1 million blocks in 5 s).
+- Schematics saved by older Minecraft versions are upgraded (e.g. `grass_path` becomes `dirt_path`).
+  Blocks from mods that aren't installed become air (you're told how many).
+- Not supported yet: entities in the schematic (item frames, armor stands, paintings), biomes, and the old
+  pre-1.13 MCEdit `.schematic` format (re-save those as `.schem` with WorldEdit 7). Maximum size 32 million blocks.
+- Pastes ignore plot protection: an admin can paste anywhere. Clipboards and undo history are reset by a restart.
 
 ### Deliberate simplifications (V1)
 
@@ -336,5 +434,6 @@ protections with simulated players. It isn't included in the release jar. Enable
 /selftest setup      # immediate checks, then places the tick-based scenarios
 /selftest check      # ~15 s later: liquids, pistons, hoppers, fire, dispenser, abandon/setowner/delete
 /selftest persist    # after a restart: data survived
-/selftest worlds     # creates test worlds; restart, run again: /mv and /mvtp checks
+/selftest worlds     # creates test worlds; restart, run again: /mv, /mvtp, inventories and portals
+/selftest schem      # writes small test schematics, then load, paste, rotate and undo checks
 ```

@@ -10,6 +10,7 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import dev.safemc.safeplots.plot.Plot;
 import dev.safemc.safeplots.plot.PlotBorders;
 import dev.safemc.safeplots.plot.PlotManager;
+import dev.safemc.safeplots.plot.SelfClaims;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -22,6 +23,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.GameProfileArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -67,6 +69,8 @@ public final class PlotCommand {
                 .then(Commands.literal("help").executes(HelpCommand::run)));
         dispatcher.register(Commands.literal("plot")
                 // ---- player commands
+                .then(Commands.literal("claimhere").executes(PlotCommand::claimHere))
+                .then(Commands.literal("confirm").executes(PlotCommand::confirm))
                 .then(Commands.literal("trust")
                         .then(Commands.argument("player", GameProfileArgument.gameProfile())
                                 .executes(c -> trust(c, true, null))
@@ -171,6 +175,46 @@ public final class PlotCommand {
                 + " The old sign is blanked. Use /plot cancel to stop.");
     }
 
+    /** Step 1 of a self-made plot: show the square around the player and ask for /plot confirm. */
+    private static int claimHere(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        PlotManager manager = manager();
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        Plot candidate = SelfClaims.candidate(manager, player);
+        String problem = SelfClaims.problem(manager, player, candidate);
+        if (problem != null) {
+            SelfClaims.cancel(player.getUUID());
+            return fail(c, problem);
+        }
+        SelfClaims.propose(player, candidate);
+        BlockPos min = candidate.min(), max = candidate.max();
+        c.getSource().sendSuccess(() -> Component.literal("Your plot would be the " + SelfClaims.SIZE + "x" + SelfClaims.SIZE
+                        + " square from " + min.getX() + ", " + min.getZ() + " to " + max.getX() + ", " + max.getZ()
+                        + " (bedrock to sky), shown by the glowing border. ").withStyle(ChatFormatting.GOLD)
+                .append(Component.literal("[Confirm]").withStyle(s -> s.withColor(ChatFormatting.GREEN).withBold(true)
+                        .withClickEvent(new ClickEvent.RunCommand("/plot confirm"))))
+                .append(Component.literal(" or type /plot confirm within " + SelfClaims.CONFIRM_SECONDS
+                        + " s. To change it, move and run /plot claimhere again.").withStyle(ChatFormatting.GOLD)), false);
+        return 1;
+    }
+
+    /** Step 2: create the plot that /plot claimhere showed. */
+    private static int confirm(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        PlotManager manager = manager();
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        Plot candidate = SelfClaims.take(player.getUUID());
+        if (candidate == null) {
+            return fail(c, "Nothing to confirm. Stand where you want your plot and run /plot claimhere first.");
+        }
+        String problem = SelfClaims.create(manager, player, candidate);
+        if (problem != null) {
+            return fail(c, problem);
+        }
+        Plot plot = manager.plotsOwnedBy(player.getUUID()).stream().filter(Plot::selfClaimed).findFirst().orElseThrow();
+        PlotBorders.show(player, plot);
+        return ok(c, "✓ Plot claimed: " + plot.name() + ". Only you (and players you /plot trust) can build here."
+                + " Run /plot showlimits to hide the border.");
+    }
+
     private static int abandon(CommandContext<CommandSourceStack> c, @Nullable String plotName) throws CommandSyntaxException {
         PlotManager manager = manager();
         ServerPlayer player = c.getSource().getPlayerOrException();
@@ -180,6 +224,12 @@ public final class PlotCommand {
         }
         if (!player.getUUID().equals(plot.owner())) {
             return fail(c, "You don't own " + plot.name() + ".");
+        }
+        if (plot.selfClaimed()) {
+            // Plots made with /plot claimhere have no sign to claim them again, so they go away entirely.
+            manager.delete(plot);
+            return ok(c, "You abandoned " + plot.name() + ". The land is no longer protected; the buildings were left as they are."
+                    + " You can claim a new plot with /plot claimhere.");
         }
         manager.setOwner(plot, null);
         return ok(c, "You abandoned " + plot.name() + ". It is available again; the buildings were left as they are.");
@@ -401,8 +451,11 @@ public final class PlotCommand {
 
     private static int cancel(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         ServerPlayer player = c.getSource().getPlayerOrException();
+        if (SelfClaims.cancel(player.getUUID())) {
+            return ok(c, "Plot claim cancelled.");
+        }
         String pending = manager().takePendingSignLink(player.getUUID());
-        return pending == null ? fail(c, "You are not linking a sign.") : ok(c, "Stopped linking a sign to " + pending + ".");
+        return pending == null ? fail(c, "You are not linking a sign or claiming a plot.") : ok(c, "Stopped linking a sign to " + pending + ".");
     }
 
     private static int setOwner(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
@@ -497,7 +550,8 @@ public final class PlotCommand {
                 " Dimension: " + plot.dimension(),
                 " Area: " + plot.describeBounds(),
                 " Trusted: " + trusted,
-                " Sign: " + (sign == null ? "not linked" : sign.getX() + ", " + sign.getY() + ", " + sign.getZ())));
+                " Sign: " + (plot.selfClaimed() ? "none (made by its owner with /plot claimhere)"
+                        : sign == null ? "not linked" : sign.getX() + ", " + sign.getY() + ", " + sign.getZ())));
     }
 
     private static int bypass(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {

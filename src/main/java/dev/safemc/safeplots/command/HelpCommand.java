@@ -21,6 +21,8 @@ public final class HelpCommand {
 
     private static final List<Section> SECTIONS = List.of(
             new Section("Your plots", false, List.of(
+                    new Entry("/plot claimhere", "Make your own 50x50 plot around where you stand"),
+                    new Entry("/plot confirm", "Confirm the plot /plot claimhere showed you"),
                     new Entry("/plot trust <player> [plot]", "Let a player build in your plot"),
                     new Entry("/plot untrust <player> [plot]", "Remove that access"),
                     new Entry("/plot showlimits [plot]", "Show your plot's borders (run again to hide)"),
@@ -29,9 +31,10 @@ public final class HelpCommand {
                     new Entry("/plot cancel", "Stop moving or linking a sign"),
                     new Entry("/ppt help", "This list"))),
             new Section("Homes & teleport", false, List.of(
-                    new Entry("/sethome", "Save this spot as your home (replaces the old one)"),
-                    new Entry("/home", "Teleport to your home"),
-                    new Entry("/delhome", "Delete your home"),
+                    new Entry("/sethome [name]", "Save this spot as a home (up to 5; same name moves it)"),
+                    new Entry("/home [name]", "Teleport to a home"),
+                    new Entry("/homes", "List your homes (click one to go there)"),
+                    new Entry("/delhome [name]", "Delete a home"),
                     new Entry("/tpa <player>", "Ask to teleport to a player"),
                     new Entry("/tpahere <player>", "Ask a player to teleport to you"),
                     new Entry("/tpaccept [player]", "Accept a teleport request"),
@@ -61,10 +64,23 @@ public final class HelpCommand {
                     new Entry("/plot bypass", "Toggle protection bypass for yourself"))),
             new Section("Worlds", true, List.of(
                     new Entry("/mv create <name> <type> [seed]", "New world: normal, amplified, large_biomes, flat, void, nether, end"),
+                    new Entry("/mv import <name> <folder> [type] [seed]", "Turn a world folder in imports/ into a world"),
                     new Entry("/mv list", "List worlds"),
                     new Entry("/mv setspawn", "Set the spawn of the world you're in"),
+                    new Entry("/mv group [world] [group]", "Which worlds share an inventory (main = world, nether, end)"),
+                    new Entry("/mv portal create <name> <world>", "Selected area becomes a portal to a world"),
+                    new Entry("/mv portal setdest <name>", "The portal lands players where you stand"),
+                    new Entry("/mv portal delete <name>", "Remove a portal (blocks stay)"),
+                    new Entry("/mv portal list", "List portals"),
                     new Entry("/mv delete <name>", "Delete a world and everything in it"),
                     new Entry("/mvtp <world> <player>", "Send a player to a world (no warm-up)"))),
+            new Section("Schematics", true, List.of(
+                    new Entry("/schem list", "Schematics in the server's schematics/ folder"),
+                    new Entry("/schem load <name>", "Load a .schem file"),
+                    new Entry("/schem rotate <degrees>", "Turn it 90, 180 or 270 degrees clockwise"),
+                    new Entry("/schem paste [noair]", "Paste where you stand (noair: keep blocks where it has air)"),
+                    new Entry("/schem info", "What's loaded and where it would go"),
+                    new Entry("/schem undo", "Undo your last paste (up to 5 are kept)"))),
             new Section("Grave admin", true, List.of(
                     new Entry("/grave list <player>", "Someone else's graves"),
                     new Entry("/grave restore <id>", "Give a grave's items to its (online) owner"))),

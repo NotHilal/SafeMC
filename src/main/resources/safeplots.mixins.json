@@ -9,6 +9,7 @@
     "HopperBlockEntityMixin",
     "LavaFluidMixin",
     "MinecraftServerAccessor",
+    "PortalBlockMixin",
     "ServerPlayerMixin",
     "TrackedEntityAccessor"
   ],

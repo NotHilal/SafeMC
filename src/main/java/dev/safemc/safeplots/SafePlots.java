@@ -5,16 +5,21 @@ import dev.safemc.safeplots.command.PlotWand;
 import dev.safemc.safeplots.grave.GraveCommand;
 import dev.safemc.safeplots.grave.GraveEvents;
 import dev.safemc.safeplots.grave.GraveManager;
+import dev.safemc.safeplots.inventory.WorldInventories;
 import dev.safemc.safeplots.moderation.ModerationCommands;
 import dev.safemc.safeplots.moderation.ModerationEvents;
 import dev.safemc.safeplots.moderation.ModerationManager;
 import dev.safemc.safeplots.plot.PlotBorders;
 import dev.safemc.safeplots.plot.PlotManager;
+import dev.safemc.safeplots.plot.SelfClaims;
 import dev.safemc.safeplots.protect.PetProtection;
 import dev.safemc.safeplots.protect.ProtectionEvents;
+import dev.safemc.safeplots.schematic.SchemCommand;
+import dev.safemc.safeplots.schematic.Schematics;
 import dev.safemc.safeplots.teleport.HomeManager;
 import dev.safemc.safeplots.teleport.TeleportCommands;
 import dev.safemc.safeplots.teleport.Teleports;
+import dev.safemc.safeplots.world.Portals;
 import dev.safemc.safeplots.world.WorldCommand;
 import dev.safemc.safeplots.world.Worlds;
 import dev.safemc.safeplots.zone.NoSpawnCommand;
@@ -42,8 +47,14 @@ public final class SafePlots {
             GraveManager.start(e.getServer());
             // Extra worlds load before anyone can join, so players who logged out in one come back there.
             Worlds.start(e.getServer());
+            Portals.start(e.getServer());
+            WorldInventories.start(e.getServer());
+            Schematics.start(e.getServer());
         });
         NeoForge.EVENT_BUS.addListener((ServerStoppedEvent e) -> {
+            Schematics.stop();
+            WorldInventories.stop();
+            Portals.stop();
             Worlds.stop();
             GraveManager.stop();
             ModerationManager.stop();
@@ -58,13 +69,18 @@ public final class SafePlots {
             TeleportCommands.register(e.getDispatcher());
             NoSpawnCommand.register(e.getDispatcher());
             WorldCommand.register(e.getDispatcher());
+            SchemCommand.register(e.getDispatcher());
         });
         // Moderation first: a frozen player is stopped before any other rule is even checked.
         NeoForge.EVENT_BUS.register(ModerationEvents.class);
         NeoForge.EVENT_BUS.register(Teleports.class);
+        NeoForge.EVENT_BUS.register(WorldInventories.class);
+        NeoForge.EVENT_BUS.register(Portals.class);
+        NeoForge.EVENT_BUS.register(Schematics.class);
         NeoForge.EVENT_BUS.register(GraveEvents.class);
         NeoForge.EVENT_BUS.register(PlotWand.class);
         NeoForge.EVENT_BUS.register(PlotBorders.class);
+        NeoForge.EVENT_BUS.register(SelfClaims.class);
         NeoForge.EVENT_BUS.register(PetProtection.class);
         NeoForge.EVENT_BUS.register(ProtectionEvents.class);
         NeoForge.EVENT_BUS.register(NoSpawnZones.class);

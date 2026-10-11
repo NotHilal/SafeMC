@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import dev.safemc.safeplots.mixin.MinecraftServerAccessor;
+import dev.safemc.safeplots.teleport.Teleports;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -98,10 +99,20 @@ public final class Worlds {
         }
     }
 
-    /** {@code spawn == null} until someone first goes there; then a safe spot near 0,0 is picked and saved. */
-    public record World(String name, Type type, long seed, @Nullable Spawn spawn) {
+    /** The inventory group of the main world, the Nether, the End and other mods' dimensions. */
+    public static final String MAIN_GROUP = "main";
+
+    /**
+     * {@code spawn == null} until someone first goes there; then a safe spot near 0,0 is picked and saved.
+     * {@code group == null} means the world has its own inventory group, named after the world.
+     */
+    public record World(String name, Type type, long seed, @Nullable Spawn spawn, @Nullable String group) {
         public ResourceKey<Level> key() {
             return ResourceKey.create(Registries.DIMENSION, Identifier.fromNamespaceAndPath(NAMESPACE, name));
+        }
+
+        public String inventoryGroup() {
+            return group != null ? group : name;
         }
     }
 
@@ -134,6 +145,11 @@ public final class Worlds {
             throw new IllegalStateException("[SafePlots] Could not read " + manager.file + ". Fix or restore the file.", e);
         }
         instance = manager;
+        try {
+            Files.createDirectories(WorldImport.importsDir(server)); // so admins see where to drop maps for /mv import
+        } catch (IOException e) {
+            LOGGER.warn("[SafePlots] Could not create {}: {}", WorldImport.importsDir(server), e.toString());
+        }
         if (!manager.pendingDeletes.isEmpty()) {
             for (String name : List.copyOf(manager.pendingDeletes)) {
                 if (!manager.worlds.containsKey(name) && manager.deleteFolder(name)) {
@@ -173,10 +189,66 @@ public final class Worlds {
         return id.getNamespace().equals(NAMESPACE) ? worlds.get(id.getPath()) : null;
     }
 
+    /** Which inventory a player uses in this level. Vanilla and other mods' dimensions all share {@link #MAIN_GROUP}. */
+    public String inventoryGroup(Level level) {
+        World world = worldOf(level);
+        return world == null ? MAIN_GROUP : world.inventoryGroup();
+    }
+
+    /** The /mvtp name of a level ({@code world}, {@code nether}, {@code end} or one of ours), or null for other mods' dimensions. */
+    public @Nullable String nameOf(Level level) {
+        if (level.dimension() == Level.OVERWORLD) return "world";
+        if (level.dimension() == Level.NETHER) return "nether";
+        if (level.dimension() == Level.END) return "end";
+        World world = worldOf(level);
+        return world == null ? null : world.name();
+    }
+
+    /** The level for a /mvtp name, or null if there is no such world or it isn't loaded. */
+    public @Nullable ServerLevel levelByName(String name) {
+        return switch (name) {
+            case "world" -> server.overworld();
+            case "nether" -> server.getLevel(Level.NETHER);
+            case "end" -> server.getLevel(Level.END);
+            default -> {
+                World world = worlds.get(name);
+                yield world == null ? null : level(world);
+            }
+        };
+    }
+
+    /** The spawn of a world by its /mvtp name, or null if it doesn't exist (any more). */
+    public Teleports.@Nullable Destination spawnDestination(String name) {
+        ServerLevel level = levelByName(name);
+        if (level == null) {
+            return null;
+        }
+        if (level == server.overworld()) {
+            LevelData.RespawnData spawn = server.getRespawnData();
+            BlockPos pos = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, spawn.pos());
+            return new Teleports.Destination(level, Vec3.atBottomCenterOf(pos), spawn.yaw(), spawn.pitch());
+        }
+        World world = worldOf(level);
+        Spawn spawn = world != null ? spawn(world, level) : vanillaSpawn(level);
+        return new Teleports.Destination(level, pos(spawn), spawn.yRot(), spawn.xRot());
+    }
+
+    /** Moves a world to another inventory group ({@code null}: its own). */
+    public void setGroup(World world, @Nullable String group) {
+        worlds.put(world.name(), new World(world.name(), world.type(), world.seed(), world.spawn(),
+                group == null || group.equals(world.name()) ? null : group));
+        save();
+    }
+
     // ---------------------------------------------------------------- create / delete
 
     public ServerLevel create(String name, Type type, long seed) {
-        World world = new World(name, type, seed, null);
+        return create(name, type, seed, null);
+    }
+
+    /** {@code spawn} may be null: a safe one is picked on the first visit. */
+    public ServerLevel create(String name, Type type, long seed, @Nullable Spawn spawn) {
+        World world = new World(name, type, seed, spawn, null);
         ServerLevel level = open(world);
         worlds.put(name, world);
         save();
@@ -220,7 +292,7 @@ public final class Worlds {
     // ---------------------------------------------------------------- spawn
 
     public void setSpawn(World world, Spawn spawn) {
-        worlds.put(world.name(), new World(world.name(), world.type(), world.seed(), spawn));
+        worlds.put(world.name(), new World(world.name(), world.type(), world.seed(), spawn, world.group()));
         save();
     }
 
@@ -343,9 +415,14 @@ public final class Worlds {
         return new LevelStem(dimensionType, generator, OptionalLong.of(seed));
     }
 
-    private boolean deleteFolder(String name) {
-        Path dir = accessor().safeplots$storageSource().getDimensionPath(
+    /** Where a world's region files live: {@code <world>/dimensions/safeplots/<name>}. */
+    public Path folder(String name) {
+        return accessor().safeplots$storageSource().getDimensionPath(
                 ResourceKey.create(Registries.DIMENSION, Identifier.fromNamespaceAndPath(NAMESPACE, name)));
+    }
+
+    private boolean deleteFolder(String name) {
+        Path dir = folder(name);
         if (!Files.exists(dir)) {
             return true;
         }
@@ -383,7 +460,8 @@ public final class Worlds {
                 spawn = new Spawn(s.get("x").getAsDouble(), s.get("y").getAsDouble(), s.get("z").getAsDouble(),
                         s.get("yRot").getAsFloat(), s.get("xRot").getAsFloat());
             }
-            worlds.put(e.getKey(), new World(e.getKey(), type, o.get("seed").getAsLong(), spawn));
+            String group = o.has("group") ? o.get("group").getAsString() : null;
+            worlds.put(e.getKey(), new World(e.getKey(), type, o.get("seed").getAsLong(), spawn, group));
         }
         if (root.has("pendingDeletes")) {
             root.getAsJsonArray("pendingDeletes").forEach(el -> pendingDeletes.add(el.getAsString()));
@@ -404,6 +482,9 @@ public final class Worlds {
                 s.addProperty("yRot", w.spawn().yRot());
                 s.addProperty("xRot", w.spawn().xRot());
                 o.add("spawn", s);
+            }
+            if (w.group() != null) {
+                o.addProperty("group", w.group());
             }
             worldsJson.add(name, o);
         });
