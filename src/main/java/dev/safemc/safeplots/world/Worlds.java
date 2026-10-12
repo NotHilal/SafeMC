@@ -42,6 +42,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
@@ -61,8 +62,8 @@ import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.flat.FlatLayerInfo;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
-import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
+import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.storage.DerivedLevelData;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.LevelResource;
@@ -105,14 +106,32 @@ public final class Worlds {
     /**
      * {@code spawn == null} until someone first goes there; then a safe spot near 0,0 is picked and saved.
      * {@code group == null} means the world has its own inventory group, named after the world.
+     * {@code gameMode == null}: players keep their own game mode there. {@code mobs == false}: no natural mob spawning.
      */
-    public record World(String name, Type type, long seed, @Nullable Spawn spawn, @Nullable String group) {
+    public record World(String name, Type type, long seed, @Nullable Spawn spawn, @Nullable String group,
+                        @Nullable GameType gameMode, boolean mobs) {
         public ResourceKey<Level> key() {
             return ResourceKey.create(Registries.DIMENSION, Identifier.fromNamespaceAndPath(NAMESPACE, name));
         }
 
         public String inventoryGroup() {
             return group != null ? group : name;
+        }
+
+        World withSpawn(Spawn spawn) {
+            return new World(name, type, seed, spawn, group, gameMode, mobs);
+        }
+
+        World withGroup(@Nullable String group) {
+            return new World(name, type, seed, spawn, group, gameMode, mobs);
+        }
+
+        World withGameMode(@Nullable GameType gameMode) {
+            return new World(name, type, seed, spawn, group, gameMode, mobs);
+        }
+
+        World withMobs(boolean mobs) {
+            return new World(name, type, seed, spawn, group, gameMode, mobs);
         }
     }
 
@@ -125,6 +144,8 @@ public final class Worlds {
     private final Map<String, World> worlds = new TreeMap<>();
     /** Folders that could not be removed right away (still open); deleted at the next start. */
     private final Set<String> pendingDeletes = new TreeSet<>();
+    /** The /mvtp name of the hub: where /hub goes and new players start. */
+    private String hub = "world";
     private final Map<ResourceKey<Level>, Spawn> vanillaSpawns = new HashMap<>();
 
     private Worlds(MinecraftServer server, Path file) {
@@ -173,6 +194,29 @@ public final class Worlds {
 
     public Collection<World> worlds() {
         return worlds.values();
+    }
+
+    public String hub() {
+        return hub;
+    }
+
+    /**
+     * True for the hub world once an admin picked one with /mv sethub: only admins may change it (outside plots).
+     * The main world is never protected this way, so servers that play survival there aren't locked.
+     */
+    public boolean isProtectedHub(Level level) {
+        return !hub.equals("world") && hub.equals(nameOf(level));
+    }
+
+    /** {@link #isProtectedHub} without needing the manager. */
+    public static boolean protectedHub(Level level) {
+        Worlds worlds = instance;
+        return worlds != null && worlds.isProtectedHub(level);
+    }
+
+    public void setHub(String name) {
+        hub = name;
+        save();
     }
 
     public boolean isPendingDelete(String name) {
@@ -235,8 +279,7 @@ public final class Worlds {
 
     /** Moves a world to another inventory group ({@code null}: its own). */
     public void setGroup(World world, @Nullable String group) {
-        worlds.put(world.name(), new World(world.name(), world.type(), world.seed(), world.spawn(),
-                group == null || group.equals(world.name()) ? null : group));
+        worlds.put(world.name(), world.withGroup(group == null || group.equals(world.name()) ? null : group));
         save();
     }
 
@@ -248,7 +291,7 @@ public final class Worlds {
 
     /** {@code spawn} may be null: a safe one is picked on the first visit. */
     public ServerLevel create(String name, Type type, long seed, @Nullable Spawn spawn) {
-        World world = new World(name, type, seed, spawn, null);
+        World world = new World(name, type, seed, spawn, null, null, true);
         ServerLevel level = open(world);
         worlds.put(name, world);
         save();
@@ -281,6 +324,9 @@ public final class Worlds {
             NeoForge.EVENT_BUS.post(new LevelEvent.Unload(level));
         }
         worlds.remove(world.name());
+        if (hub.equals(world.name())) {
+            hub = "world";
+        }
         boolean deleted = deleteFolder(world.name());
         if (!deleted) {
             pendingDeletes.add(world.name());
@@ -292,7 +338,20 @@ public final class Worlds {
     // ---------------------------------------------------------------- spawn
 
     public void setSpawn(World world, Spawn spawn) {
-        worlds.put(world.name(), new World(world.name(), world.type(), world.seed(), spawn, world.group()));
+        worlds.put(world.name(), world.withSpawn(spawn));
+        save();
+    }
+
+    /** Forces a game mode on players in the world ({@code null}: they keep their own). Returns the updated world. */
+    public World setGameMode(World world, @Nullable GameType gameMode) {
+        World updated = world.withGameMode(gameMode);
+        worlds.put(world.name(), updated);
+        save();
+        return updated;
+    }
+
+    public void setMobs(World world, boolean mobs) {
+        worlds.put(world.name(), world.withMobs(mobs));
         save();
     }
 
@@ -461,10 +520,15 @@ public final class Worlds {
                         s.get("yRot").getAsFloat(), s.get("xRot").getAsFloat());
             }
             String group = o.has("group") ? o.get("group").getAsString() : null;
-            worlds.put(e.getKey(), new World(e.getKey(), type, o.get("seed").getAsLong(), spawn, group));
+            GameType gameMode = o.has("gameMode") ? GameType.byName(o.get("gameMode").getAsString(), null) : null;
+            boolean mobs = !o.has("mobs") || o.get("mobs").getAsBoolean();
+            worlds.put(e.getKey(), new World(e.getKey(), type, o.get("seed").getAsLong(), spawn, group, gameMode, mobs));
         }
         if (root.has("pendingDeletes")) {
             root.getAsJsonArray("pendingDeletes").forEach(el -> pendingDeletes.add(el.getAsString()));
+        }
+        if (root.has("hub")) {
+            hub = root.get("hub").getAsString();
         }
     }
 
@@ -486,12 +550,21 @@ public final class Worlds {
             if (w.group() != null) {
                 o.addProperty("group", w.group());
             }
+            if (w.gameMode() != null) {
+                o.addProperty("gameMode", w.gameMode().getName());
+            }
+            if (!w.mobs()) {
+                o.addProperty("mobs", false);
+            }
             worldsJson.add(name, o);
         });
         JsonObject root = new JsonObject();
         root.add("worlds", worldsJson);
         if (!pendingDeletes.isEmpty()) {
             root.add("pendingDeletes", GSON.toJsonTree(pendingDeletes));
+        }
+        if (!hub.equals("world")) {
+            root.addProperty("hub", hub);
         }
         try {
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");

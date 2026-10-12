@@ -39,7 +39,7 @@ public final class HelpCommand {
                     new Entry("/tpahere <player>", "Ask a player to teleport to you"),
                     new Entry("/tpaccept [player]", "Accept a teleport request"),
                     new Entry("/tpdeny [player]", "Deny a teleport request"),
-                    new Entry("/mvtp <world>", "Teleport to another world (world, nether, end, or one an admin made)"))),
+                    new Entry("/hub", "Go back to the hub"))),
             new Section("Graves", false, List.of(
                     new Entry("/grave list", "Where your graves are"))),
             new Section("Plot admin", true, List.of(
@@ -68,11 +68,17 @@ public final class HelpCommand {
                     new Entry("/mv list", "List worlds"),
                     new Entry("/mv setspawn", "Set the spawn of the world you're in"),
                     new Entry("/mv group [world] [group]", "Which worlds share an inventory (main = world, nether, end)"),
+                    new Entry("/mv sethub <world>", "Pick the hub world (/hub, first join)"),
+                    new Entry("/mv gamemode <world> <mode|none>", "Everyone there is put in that game mode"),
+                    new Entry("/mv mobs <world> on|off", "Turn natural mob spawning in a world on or off"),
                     new Entry("/mv portal create <name> <world>", "Selected area becomes a portal to a world"),
                     new Entry("/mv portal setdest <name>", "The portal lands players where you stand"),
-                    new Entry("/mv portal delete <name>", "Remove a portal (blocks stay)"),
+                    new Entry("/mv portal water <name>", "Fill the portal with water that stays put"),
+                    new Entry("/mv portal drain <name>", "Remove the water, back to a normal portal"),
+                    new Entry("/mv portal delete <name>", "Remove a portal (blocks stay, water is removed)"),
                     new Entry("/mv portal list", "List portals"),
                     new Entry("/mv delete <name>", "Delete a world and everything in it"),
+                    new Entry("/mvtp <world>", "Go to a world's spawn (world, nether, end or a /mv world)"),
                     new Entry("/mvtp <world> <player>", "Send a player to a world (no warm-up)"))),
             new Section("Schematics", true, List.of(
                     new Entry("/schem list", "Schematics in the server's schematics/ folder"),

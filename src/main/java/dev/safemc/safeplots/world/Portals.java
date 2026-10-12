@@ -25,12 +25,20 @@ import java.util.TreeMap;
 import java.util.UUID;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Portal;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
@@ -49,14 +57,19 @@ import org.slf4j.Logger;
  *   <li>Anywhere else in the box (any blocks, e.g. a decorative gate), walking in teleports you right away.</li>
  * </ul>
  * Arriving inside another portal doesn't send you on: you have to step out and back in.
+ * <p>A water portal ({@code /mv portal water}) is filled with still water that never flows out of the box (see
+ * {@code FlowingFluidMixin}); it works like any other walk-in portal.
  */
 public final class Portals {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
+    /** Most blocks {@code /mv portal water} fills, so a huge selection can't flood an area by mistake. */
+    public static final int MAX_WATER_BLOCKS = 4096;
+
     /** Inclusive block bounds. {@code dest == null}: the spawn of {@code target}. */
     public record Entry(String name, String dimension, int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
-                        String target, Worlds.@Nullable Spawn dest) {
+                        String target, Worlds.@Nullable Spawn dest, boolean water) {
         public boolean contains(String dim, BlockPos pos) {
             return dimension.equals(dim)
                     && pos.getX() >= minX && pos.getX() <= maxX
@@ -67,6 +80,14 @@ public final class Portals {
         public boolean overlaps(Entry o) {
             return dimension.equals(o.dimension) && minX <= o.maxX && maxX >= o.minX
                     && minY <= o.maxY && maxY >= o.minY && minZ <= o.maxZ && maxZ >= o.minZ;
+        }
+
+        public long volume() {
+            return (long) (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+        }
+
+        public Iterable<BlockPos> blocks() {
+            return BlockPos.betweenClosed(minX, minY, minZ, maxX, maxY, maxZ);
         }
 
         public String describe() {
@@ -147,8 +168,68 @@ public final class Portals {
 
     public void setDestination(Entry portal, String target, Worlds.@Nullable Spawn dest) {
         portals.put(portal.name(), new Entry(portal.name(), portal.dimension(), portal.minX(), portal.minY(), portal.minZ(),
-                portal.maxX(), portal.maxY(), portal.maxZ(), target, dest));
+                portal.maxX(), portal.maxY(), portal.maxZ(), target, dest, portal.water()));
         save();
+    }
+
+    public @Nullable ServerLevel level(Entry portal) {
+        return server.getLevel(ResourceKey.create(Registries.DIMENSION, Identifier.parse(portal.dimension())));
+    }
+
+    /** True if water placed in this portal would evaporate (the Nether, or a /mv nether world). */
+    public static boolean waterEvaporates(ServerLevel level, Entry portal) {
+        return level.environmentAttributes().getValue(EnvironmentAttributes.WATER_EVAPORATES,
+                new BlockPos(portal.minX(), portal.minY(), portal.minZ()));
+    }
+
+    /** Makes it a water portal and fills every air block in the box with still water. Returns the blocks filled. */
+    public int fillWater(Entry portal, ServerLevel level) {
+        Entry watered = withWater(portal, true);
+        portals.put(portal.name(), watered);
+        save();
+        int filled = 0;
+        for (BlockPos pos : portal.blocks()) {
+            if (level.getBlockState(pos).isAir()) {
+                level.setBlock(pos, Blocks.WATER.defaultBlockState(), Block.UPDATE_ALL);
+                filled++;
+            }
+        }
+        return filled;
+    }
+
+    /** Removes the water from the box (blocks that are only water) and makes it a normal portal again. */
+    public int drainWater(Entry portal, @Nullable ServerLevel level) {
+        int drained = 0;
+        if (level != null) {
+            for (BlockPos pos : portal.blocks()) {
+                if (level.getBlockState(pos).is(Blocks.WATER)) {
+                    level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+                    drained++;
+                }
+            }
+        }
+        if (portals.containsKey(portal.name())) {
+            portals.put(portal.name(), withWater(portal, false));
+            save();
+        }
+        return drained;
+    }
+
+    private static Entry withWater(Entry p, boolean water) {
+        return new Entry(p.name(), p.dimension(), p.minX(), p.minY(), p.minZ(), p.maxX(), p.maxY(), p.maxZ(), p.target(), p.dest(), water);
+    }
+
+    /**
+     * Called by {@code FlowingFluidMixin}: true if fluid flowing from {@code from} to {@code to} would leave a water
+     * portal, so the water stays a flat sheet inside the frame.
+     */
+    public static boolean keepsFluidIn(Level level, BlockPos from, BlockPos to) {
+        Portals manager = instance;
+        if (manager == null || manager.portals.isEmpty()) {
+            return false;
+        }
+        Entry portal = manager.portalAt(level, from);
+        return portal != null && portal.water() && !portal.contains(PlotManager.dimensionId(level), to);
     }
 
     /** Where a portal leads right now, or null if its world was deleted or isn't loaded. */
@@ -277,7 +358,7 @@ public final class Portals {
             portals.put(e.getKey(), new Entry(e.getKey(), o.get("dimension").getAsString(),
                     o.get("minX").getAsInt(), o.get("minY").getAsInt(), o.get("minZ").getAsInt(),
                     o.get("maxX").getAsInt(), o.get("maxY").getAsInt(), o.get("maxZ").getAsInt(),
-                    o.get("target").getAsString(), dest));
+                    o.get("target").getAsString(), dest, o.has("water") && o.get("water").getAsBoolean()));
         }
     }
 
@@ -301,6 +382,9 @@ public final class Portals {
                 d.addProperty("yRot", p.dest().yRot());
                 d.addProperty("xRot", p.dest().xRot());
                 o.add("dest", d);
+            }
+            if (p.water()) {
+                o.addProperty("water", true);
             }
             json.add(name, o);
         });

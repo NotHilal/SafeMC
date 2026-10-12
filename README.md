@@ -51,7 +51,7 @@ Admin means operator permission level 2 or higher (the default `/op` level is 4)
 | `/plot movesign [plot]` | Moves your plot's claim sign: place a sign inside your plot, or right-click one that's already there. The old sign is blanked |
 | `/plot cancel` | Cancels a `/plot claimhere` that isn't confirmed yet, or stops moving (or, for admins, linking) a sign |
 | `/ppt help` (or just `/ppt`) | Lists every command you can use; admins also see the admin and moderation commands. Click a line to type it |
-| `/mvtp <world>` | Teleports you to another world (see [Extra worlds](#extra-worlds-mv-mvtp)) |
+| `/hub` | Takes you back to the hub's spawn (3 s warm-up, like `/home`). Other worlds are reached by portal |
 | `/plot showlimits [plot]` | Outlines the plot's borders with glowing particles (only you see them). Run it again to hide them. Admins can show any plot |
 
 Without `[plot]`, these use the plot you are standing in. `trust`, `untrust`, `movesign` and `showlimits` also fall back
@@ -289,11 +289,17 @@ Admins can add worlds while the server runs, like Multiverse. Each one is a norm
 | `/mv group <world> <group>` | Puts a world in an inventory group (`main` = the main world's inventory) |
 | `/mv portal create <name> <world>` | Turns the selected area into a portal to that world (see [Portals](#portals)) |
 | `/mv portal setdest <name>` | The portal now lands players exactly where you stand (any world) |
-| `/mv portal delete <name>` | Removes the portal. Blocks are not changed |
+| `/mv portal water <name>` | Fills the portal's area with water that never flows out (see [Portals](#portals)) |
+| `/mv portal drain <name>` | Removes that water again |
+| `/mv portal delete <name>` | Removes the portal. Blocks are not changed, except a water portal's water is removed |
 | `/mv portal list` | Lists portals (also just `/mv portal`) |
 | `/mv delete <name> confirm` | Unloads the world and deletes its folder. Players inside are sent to the main spawn |
-| `/mvtp <world>` | **Everyone**: goes to a world's spawn, with the usual 3 s warm-up and cooldown. `world`, `nether` and `end` are the vanilla dimensions |
-| `/mvtp <world> <player>` | Admin: sends a player there instantly |
+| `/mvtp <world>` | Goes to a world's spawn instantly. `world`, `nether` and `end` are the vanilla dimensions. Admins only: players use portals and `/hub` |
+| `/mvtp <world> <player>` | Sends a player there instantly |
+| `/hub` | **Everyone**: back to the hub's spawn, with the usual 3 s warm-up and cooldown |
+| `/mv gamemode <world> <mode>` | Everyone arriving in that world is put in `survival`, `creative`, `adventure` or `spectator` mode; `none` removes the rule (see [World rules](#world-rules)) |
+| `/mv mobs <world> on\|off` | Turns natural mob spawning in that world on or off |
+| `/mv sethub <world>` | Makes that world the hub: `/hub` goes to its spawn and players joining for the first time start there. `world` (the default) = the main world. Without `<world>`, shows the current hub |
 
 The first visit picks a safe spot near 0,0 as the spawn (a void world gets a small stone platform). Worlds
 are listed in `<world>/safeplots-worlds.json` and stored in `<world>/dimensions/safeplots/<name>/`; they load at
@@ -308,6 +314,41 @@ Copying runs in the background; you get a message when it's ready. Maps from old
 upgraded as their chunks load (make a backup first); maps from newer versions are refused. The folder in
 `imports/` is left untouched and can be deleted afterwards.
 
+#### World rules
+
+For worlds made with `/mv create` or `/mv import`. For example, a creative world without mobs:
+
+```
+/mv create creative flat
+/mv gamemode creative creative
+/mv mobs creative off
+```
+
+- **`/mv gamemode <world> <mode>`**: players arriving there (portal, `/mvtp`, `/hub`, login, respawn) are put in
+  that mode, and get their own mode back when they arrive in a world without a rule. This includes admins, who
+  can still switch with `/gamemode` while they're there.
+  Players already in the world switch right away. `/mv gamemode <world> none` removes the rule.
+- A creative world should have its own inventory (the default for new worlds), or players could carry creative
+  items into survival. `/mv gamemode` warns you if it shares one.
+- **`/mv mobs <world> off`**: no mobs spawn there by themselves: no natural spawns, none from world generation,
+  structures, spawners, patrols or wandering traders. Spawn eggs, `/summon`, breeding and buckets still work.
+  Mobs already there stay until they despawn.
+- Without a value, both commands show the current setting.
+
+#### Hub
+
+`/hub` takes players to the hub's spawn. By default the hub is the main world. To use another world (e.g. one
+you imported), run `/mv sethub <name>`, then stand where players should appear in that world and run
+`/mv setspawn`. Players joining the server for the first time start there; returning players log in where
+they left. Deleting the hub world makes the main world the hub again.
+
+The hub world is protected like one big plot that only staff (ops) can change, without needing `/plot bypass`:
+players can't break or place blocks, pour buckets, light fires, hurt animals or break item frames there, and
+explosions, fire and mobs don't damage it. Everyone can still open doors, trapdoors and gates, press buttons,
+flip levers, ring bells and use crafting tables and ender chests. Nobody can `/plot claimhere` in the hub, but
+admins can still make sign plots there (e.g. shops), which follow the normal plot rules. The main world is never
+protected this way, so this only applies after `/mv sethub` picks another world.
+
 #### Portals
 
 Select an area with the plot wand (or `/plot pos1` / `/plot pos2`), then `/mv portal create <name> <world>`.
@@ -318,6 +359,10 @@ and run `/mv portal setdest <name>` to land there instead (e.g. next to a return
   to the portal's world. Build a normal obsidian portal, light it, select it, done.
 - **Anywhere else in the area** (any decorative gate, no portal blocks needed), walking in teleports you
   right away, with no warm-up.
+- **Water portals**: `/mv portal water <name>` fills every air block in the area with still water, Aether style
+  (e.g. a glowstone frame with a sheet of water). The water never flows out of the area, so select just the
+  opening, one block thick. Walking in teleports you right away. Max 4096 blocks; not possible where water
+  evaporates (the Nether). `/mv portal drain <name>` makes it a normal portal again.
 - Arriving inside another portal's area doesn't send you on; step out and back in to use it.
 - Jailed players can't use portals. Nether/End portals outside any portal area work as before.
 

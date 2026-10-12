@@ -714,24 +714,137 @@ public final class SelfTest {
         dev.safemc.safeplots.world.Portals portals = dev.safemc.safeplots.world.Portals.get();
         portals.remove("st_gate");
         portals.remove("st_np");
-        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_gate", "minecraft:overworld", 2000, Y, 2000, 2002, Y + 2, 2000, "st_normal", null));
+        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_gate", "minecraft:overworld", 2000, Y, 2000, 2002, Y + 2, 2000, "st_normal", null, false));
         console(server, "mvtp world Walker");
         walker.teleportTo(server.overworld(), 2001.5, Y, 2000.5, java.util.Set.of(), 0, 0, true);
         dev.safemc.safeplots.world.Portals.onPlayerTick(new net.neoforged.neoforge.event.tick.PlayerTickEvent.Post(walker));
         expect(walker.level() == normal, "walking into a portal area sends the player to its world");
         expect(walker.getInventory().countItem(Items.DIRT) == 7, "arriving by portal switches the inventory too");
-        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_np", "minecraft:overworld", 2010, Y, 2010, 2010, Y, 2010, "st_normal", null));
+        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_np", "minecraft:overworld", 2010, Y, 2010, 2010, Y, 2010, "st_normal", null, false));
         var transition = ((net.minecraft.world.level.block.Portal) Blocks.NETHER_PORTAL)
                 .getPortalDestination(server.overworld(), walker, new BlockPos(2010, Y, 2010));
         expect(transition != null && transition.newLevel() == normal, "a nether portal inside a portal area leads to its world");
         portals.remove("st_gate");
         portals.remove("st_np");
 
+        // A water portal: 1x2 opening at (2020, Y..Y+1, 2020), filled with water that must not flow out.
+        ServerLevel ow = server.overworld();
+        for (BlockPos p : BlockPos.betweenClosed(2019, Y - 1, 2019, 2021, Y + 2, 2021)) {
+            ow.setBlock(p, Blocks.AIR.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
+        }
+        ow.setBlock(new BlockPos(2020, Y - 1, 2020), Blocks.GLOWSTONE.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
+        portals.add(new dev.safemc.safeplots.world.Portals.Entry("st_water", "minecraft:overworld", 2020, Y, 2020, 2020, Y + 1, 2020, "st_normal", null, false));
+        console(server, "mv portal water st_water");
+        expect(portals.portal("st_water").water(), "/mv portal water marks the portal");
+        expect(ow.getFluidState(new BlockPos(2020, Y, 2020)).isSource() && ow.getFluidState(new BlockPos(2020, Y + 1, 2020)).isSource(),
+                "/mv portal water fills the opening with water sources");
+        expect(dev.safemc.safeplots.world.Portals.keepsFluidIn(ow, new BlockPos(2020, Y, 2020), new BlockPos(2021, Y, 2020))
+                        && !dev.safemc.safeplots.world.Portals.keepsFluidIn(ow, new BlockPos(2020, Y + 1, 2020), new BlockPos(2020, Y, 2020)),
+                "water can't flow out of a water portal but can move inside it");
+        ow.getFluidState(new BlockPos(2020, Y, 2020)).tick(ow, new BlockPos(2020, Y, 2020), ow.getBlockState(new BlockPos(2020, Y, 2020)));
+        expect(ow.getFluidState(new BlockPos(2021, Y, 2020)).isEmpty() && ow.getFluidState(new BlockPos(2019, Y, 2020)).isEmpty(),
+                "a water portal's water doesn't spread sideways");
+        console(server, "mv portal delete st_water");
+        expect(portals.portal("st_water") == null && ow.getFluidState(new BlockPos(2020, Y, 2020)).isEmpty(),
+                "deleting a water portal removes its water");
+
+        // ---- hub
+        console(server, "mv sethub st_normal");
+        expect(worlds.hub().equals("st_normal"), "/mv sethub picks the hub world");
+        var commands = server.getCommands().getDispatcher().getRoot();
+        expect(!commands.getChild("mvtp").canUse(walker.createCommandSourceStack()) && commands.getChild("hub").canUse(walker.createCommandSourceStack()),
+                "players can use /hub but not /mvtp");
+        console(server, "mvtp world Walker");
+        walker.resetStat(net.minecraft.stats.Stats.CUSTOM.get(net.minecraft.stats.Stats.LEAVE_GAME));
+        dev.safemc.safeplots.world.Hub.onLogin(new net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent(walker));
+        expect(walker.level() == normal, "a first-time player starts in the hub");
+        console(server, "mvtp world Walker");
+        walker.awardStat(net.minecraft.stats.Stats.LEAVE_GAME);
+        dev.safemc.safeplots.world.Hub.onLogin(new net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent(walker));
+        expect(walker.level() == server.overworld(), "a returning player stays where they logged out");
+
+        // The hub is protected: only staff may change it, but everyone may use levers, doors etc.
+        var hubSpawn = worlds.spawnDestination("st_normal");
+        BlockPos hb = BlockPos.containing(hubSpawn.pos()).above(4);
+        walker.teleportTo(normal, hubSpawn.pos().x, hubSpawn.pos().y, hubSpawn.pos().z, java.util.Set.of(), 0, 0, true);
+        normal.setBlockAndUpdate(hb, Blocks.STONE.defaultBlockState());
+        walker.gameMode.destroyBlock(hb);
+        expect(normal.getBlockState(hb).is(Blocks.STONE), "players can't break blocks in the hub");
+        click(walker, hb, new ItemStack(Items.DIRT));
+        expect(normal.getBlockState(hb.above()).isAir(), "players can't place blocks in the hub");
+        normal.setBlockAndUpdate(hb.above(), Blocks.LEVER.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.LeverBlock.FACE, net.minecraft.world.level.block.state.properties.AttachFace.FLOOR));
+        click(walker, hb.above(), ItemStack.EMPTY);
+        expect(normal.getBlockState(hb.above()).getValue(net.minecraft.world.level.block.LeverBlock.POWERED), "players can still flip levers in the hub");
+        normal.setBlockAndUpdate(hb.above(), Blocks.AIR.defaultBlockState());
+        normal.explode(null, hb.getX() + 0.5, hb.getY() + 1, hb.getZ() + 0.5, 3.0F, Level.ExplosionInteraction.TNT);
+        expect(normal.getBlockState(hb).is(Blocks.STONE), "explosions don't break the hub");
+        String hubClaim = dev.safemc.safeplots.plot.SelfClaims.problem(pm, walker, dev.safemc.safeplots.plot.SelfClaims.candidate(pm, walker));
+        expect(hubClaim != null && hubClaim.contains("hub"), "players can't /plot claimhere in the hub");
+        ServerPlayer hubAdmin = fakePlayer(server, "HubAdmin");
+        server.getPlayerList().op(hubAdmin.nameAndId());
+        hubAdmin.teleportTo(normal, hubSpawn.pos().x, hubSpawn.pos().y, hubSpawn.pos().z, java.util.Set.of(), 0, 0, true);
+        hubAdmin.gameMode.destroyBlock(hb);
+        expect(normal.getBlockState(hb).isAir(), "staff can build in the hub without /plot bypass");
+        server.getPlayerList().remove(hubAdmin);
+        console(server, "mvtp world Walker");
+
+        // ---- per-world game mode and mob spawning
+        net.minecraft.world.level.GameType survival = net.minecraft.world.level.GameType.SURVIVAL;
+        net.minecraft.world.level.GameType creative = net.minecraft.world.level.GameType.CREATIVE;
+        console(server, "mvtp world Walker");
+        walker.setGameMode(survival);
+        console(server, "mv gamemode st_normal creative");
+        console(server, "mvtp st_normal Walker");
+        expect(walker.gameMode.getGameModeForPlayer() == creative, "arriving in a creative world puts players in creative");
+        console(server, "mvtp world Walker");
+        expect(walker.gameMode.getGameModeForPlayer() == survival, "leaving it gives their own game mode back");
+        ServerPlayer ruleAdmin = fakePlayer(server, "RuleAdmin");
+        server.getPlayerList().op(ruleAdmin.nameAndId());
+        console(server, "mvtp world RuleAdmin");
+        ruleAdmin.setGameMode(survival);
+        console(server, "mvtp st_normal RuleAdmin");
+        expect(ruleAdmin.gameMode.getGameModeForPlayer() == creative, "admins are put in the world's game mode too");
+        console(server, "mvtp world RuleAdmin");
+        expect(ruleAdmin.gameMode.getGameModeForPlayer() == survival, "and get their own mode back when they leave");
+        server.getPlayerList().remove(ruleAdmin);
+        console(server, "mv group st_normal main");
+        console(server, "mvtp st_normal Walker");
+        expect(walker.gameMode.getGameModeForPlayer() == creative, "creative world sharing the main inventory: creative inside");
+        console(server, "mvtp world Walker");
+        expect(walker.gameMode.getGameModeForPlayer() == survival, "creative world sharing the main inventory: survival again outside");
+        console(server, "mv group st_normal st_normal");
+        console(server, "mvtp st_normal Walker");
+        console(server, "mv gamemode st_normal none");
+        expect(walker.gameMode.getGameModeForPlayer() == survival, "/mv gamemode none gives players in the world their own mode back");
+        console(server, "mvtp world Walker");
+        expect(worlds.world("st_normal").gameMode() == null, "/mv gamemode none clears the rule");
+
+        BlockPos mobPos = BlockPos.containing(worlds.spawnDestination("st_normal").pos());
+        console(server, "mv mobs st_normal off");
+        expect(!worlds.world("st_normal").mobs(), "/mv mobs off is saved");
+        var natural = EntityTypes.ZOMBIE.spawn(normal, mobPos, EntitySpawnReason.NATURAL);
+        expect(natural == null || natural.isRemoved(), "no natural spawns in a world with mobs off");
+        var cow = EntityTypes.COW.spawn(normal, mobPos, EntitySpawnReason.CHUNK_GENERATION);
+        expect(cow == null || cow.isRemoved(), "no animals from world generation either");
+        var egg = EntityTypes.ZOMBIE.spawn(normal, mobPos, EntitySpawnReason.SPAWN_ITEM_USE);
+        expect(egg != null && !egg.isRemoved(), "spawn eggs still work with mobs off");
+        if (egg != null) {
+            egg.discard();
+        }
+        console(server, "mv mobs st_normal on");
+        var again = EntityTypes.ZOMBIE.spawn(normal, mobPos, EntitySpawnReason.NATURAL);
+        expect(again != null && !again.isRemoved(), "/mv mobs on allows natural spawns again");
+        if (again != null) {
+            again.discard();
+        }
+
         console(server, "mvtp st_void Walker");
         console(server, "mv delete st_void confirm");
         expect(walker.level() == server.overworld(), "deleting a world sends players in it to spawn");
         expect(worlds.world("st_void") == null && server.getLevel(voidLevel.dimension()) == null, "deleted world is unloaded");
         console(server, "mv delete st_normal confirm");
+        expect(worlds.hub().equals("world"), "deleting the hub world makes the main world the hub again");
         expect(worlds.worlds().isEmpty() || worlds.world("st_normal") == null, "cleanup");
         server.getPlayerList().remove(walker);
     }

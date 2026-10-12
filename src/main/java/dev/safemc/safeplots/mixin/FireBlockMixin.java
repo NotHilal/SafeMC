@@ -11,13 +11,13 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Fire never burns away blocks inside a plot, no matter where it came from. */
+/** Fire never burns away blocks inside a plot (or the hub), no matter where it came from. */
 @Mixin(FireBlock.class)
 public abstract class FireBlockMixin {
     @Inject(method = "checkBurnOut", at = @At("HEAD"), cancellable = true)
     private void safeplots$noBurningInPlots(Level level, BlockPos pos, int chance, RandomSource random, int age, Direction face, CallbackInfo ci) {
         PlotManager manager = PlotManager.get();
-        if (manager != null && manager.plotAt(level, pos) != null) {
+        if (manager != null && manager.isProtected(level, pos)) {
             ci.cancel();
         }
     }

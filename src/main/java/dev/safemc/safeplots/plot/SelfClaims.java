@@ -67,6 +67,9 @@ public final class SelfClaims {
             return "You already own " + owned + "/" + max + " plots. Ask an admin for another claim slot.";
         }
         ServerLevel level = manager.level(candidate.dimension());
+        if (level != null && Worlds.protectedHub(level)) {
+            return "You can't claim land in the hub. Go to another world first.";
+        }
         if (level != null) {
             BlockPos spawn = spawnOf(level);
             BlockPos min = candidate.min(), max2 = candidate.max();

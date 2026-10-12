@@ -1,6 +1,7 @@
 package dev.safemc.safeplots.plot;
 
 import com.mojang.logging.LogUtils;
+import dev.safemc.safeplots.world.Worlds;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -225,10 +226,21 @@ public final class PlotManager {
         return true;
     }
 
-    /** The core rule: owner, trusted, or admin with bypass may modify; everyone may modify outside plots. */
+    /**
+     * The core rule: owner, trusted, or admin with bypass may modify; everyone may modify outside plots, except
+     * in the hub world, where only admins may (no bypass needed).
+     */
     public boolean canModify(Player player, Level level, BlockPos pos) {
         Plot plot = plotAt(level, pos);
-        return plot == null || plot.isMember(player.getUUID()) || hasBypass(player);
+        if (plot == null) {
+            return !Worlds.protectedHub(level) || isAdmin(player);
+        }
+        return plot.isMember(player.getUUID()) || hasBypass(player);
+    }
+
+    /** Whether blocks here are safe from explosions, fire, mobs etc.: inside any plot, or anywhere in the hub world. */
+    public boolean isProtected(Level level, BlockPos pos) {
+        return plotAt(level, pos) != null || Worlds.protectedHub(level);
     }
 
     // ---------------------------------------------------------------- selections and sign linking

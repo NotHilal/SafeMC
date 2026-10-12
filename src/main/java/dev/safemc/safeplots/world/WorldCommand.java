@@ -25,15 +25,18 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.GameType;
 import org.jspecify.annotations.Nullable;
 
 /**
- * /mv create|delete|list|setspawn (admins) and /mvtp &lt;world&gt; (everyone, with the usual teleport warm-up).
+ * /mv create|delete|list|setspawn and /mvtp &lt;world&gt; [player] (admins), /hub (everyone, with the usual teleport
+ * warm-up). Players get to other worlds by portal or /hub only.
  * {@code world}, {@code nether} and {@code end} are the vanilla dimensions.
  */
 public final class WorldCommand {
     private static final Pattern NAME = Pattern.compile("[a-z0-9_-]{1,32}");
     private static final List<String> VANILLA = List.of("world", "nether", "end");
+    private static final List<String> GAME_MODES = List.of("survival", "creative", "adventure", "spectator", "none");
 
     private static final SuggestionProvider<CommandSourceStack> OUR_WORLDS =
             (ctx, b) -> SharedSuggestionProvider.suggest(worlds().worlds().stream().map(Worlds.World::name), b);
@@ -75,6 +78,21 @@ public final class WorldCommand {
                                 .then(Commands.literal("confirm").executes(c -> delete(c, true)))))
                 .then(Commands.literal("list").executes(WorldCommand::list))
                 .then(Commands.literal("setspawn").executes(WorldCommand::setSpawn))
+                .then(Commands.literal("gamemode")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
+                                .executes(WorldCommand::showGameMode)
+                                .then(Commands.argument("mode", StringArgumentType.word())
+                                        .suggests((ctx, b) -> SharedSuggestionProvider.suggest(GAME_MODES, b))
+                                        .executes(WorldCommand::setGameMode))))
+                .then(Commands.literal("mobs")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
+                                .executes(WorldCommand::showMobs)
+                                .then(Commands.literal("on").executes(c -> setMobs(c, true)))
+                                .then(Commands.literal("off").executes(c -> setMobs(c, false)))))
+                .then(Commands.literal("sethub")
+                        .executes(WorldCommand::showHub)
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::setHub)))
                 .then(Commands.literal("group")
                         .executes(WorldCommand::listGroups)
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
@@ -91,17 +109,116 @@ public final class WorldCommand {
                         .then(Commands.literal("setdest")
                                 .then(Commands.argument("name", StringArgumentType.word()).suggests(PORTALS)
                                         .executes(WorldCommand::setPortalDest)))
+                        .then(Commands.literal("water")
+                                .then(Commands.argument("name", StringArgumentType.word()).suggests(PORTALS)
+                                        .executes(WorldCommand::waterPortal)))
+                        .then(Commands.literal("drain")
+                                .then(Commands.argument("name", StringArgumentType.word()).suggests(PORTALS)
+                                        .executes(WorldCommand::drainPortal)))
                         .then(Commands.literal("delete")
                                 .then(Commands.argument("name", StringArgumentType.word()).suggests(PORTALS)
                                         .executes(WorldCommand::deletePortal)))
                         .then(Commands.literal("list").executes(WorldCommand::listPortals))));
 
-        d.register(Commands.literal("mvtp")
+        d.register(Commands.literal("mvtp").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
                         .executes(c -> teleport(c, c.getSource().getPlayerOrException()))
                         .then(Commands.argument("player", EntityArgument.player())
-                                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                                 .executes(c -> teleport(c, EntityArgument.getPlayer(c, "player"))))));
+
+        // The hub is the main world unless an admin picked another with /mv sethub.
+        d.register(Commands.literal("hub").executes(WorldCommand::hub));
+    }
+
+    private static int hub(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        if (worlds().levelByName(worlds().hub()) == null) {
+            return fail(c, "The hub world (" + worlds().hub() + ") isn't loaded. Ask an admin.");
+        }
+        return Teleports.start(player, "the hub", () -> worlds().spawnDestination(worlds().hub())) ? 1 : 0;
+    }
+
+    // ---------------------------------------------------------------- per-world rules
+
+    private static int showGameMode(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = ourWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        return ok(c, world.gameMode() == null
+                ? "Players keep their own game mode in " + world.name() + ". Set one with /mv gamemode " + world.name() + " <mode>."
+                : "Everyone is in " + world.gameMode().getName() + " mode in " + world.name() + ".");
+    }
+
+    private static int setGameMode(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = ourWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        String mode = StringArgumentType.getString(c, "mode");
+        GameType gameMode = mode.equals("none") ? null : GameType.byName(mode, null);
+        if (gameMode == null && !mode.equals("none")) {
+            return fail(c, "Unknown game mode " + mode + ". Use survival, creative, adventure, spectator or none.");
+        }
+        Worlds.World updated = worlds().setGameMode(world, gameMode);
+        WorldRules.applyToWorld(worlds(), updated);
+        if (gameMode == null) {
+            return ok(c, "✓ Players keep their own game mode in " + world.name() + " again.");
+        }
+        String message = "✓ Everyone arriving in " + world.name() + " is now put in " + gameMode.getName()
+                + " mode, admins too. They get their own mode back when they leave.";
+        List<String> sharing = sharesInventoryWith(updated);
+        if (gameMode == GameType.CREATIVE && !sharing.isEmpty()) {
+            message += "\n⚠ " + world.name() + " shares its inventory with " + String.join(", ", sharing)
+                    + ", so players could carry creative items there. Give it its own inventory: /mv group " + world.name() + " " + world.name();
+        }
+        return ok(c, message);
+    }
+
+    /** Other worlds that use the same inventory as this one but not the same game mode. */
+    private static List<String> sharesInventoryWith(Worlds.World world) {
+        List<String> names = new ArrayList<>();
+        if (world.inventoryGroup().equals(Worlds.MAIN_GROUP)) {
+            names.addAll(VANILLA);
+        }
+        worlds().worlds().stream()
+                .filter(w -> !w.name().equals(world.name()) && w.inventoryGroup().equals(world.inventoryGroup()) && w.gameMode() != world.gameMode())
+                .forEach(w -> names.add(w.name()));
+        return names;
+    }
+
+    private static int showMobs(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = ourWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        return ok(c, world.mobs() ? "Mobs spawn normally in " + world.name() + "." : "No mobs spawn by themselves in " + world.name() + ".");
+    }
+
+    private static int setMobs(CommandContext<CommandSourceStack> c, boolean mobs) {
+        Worlds.World world = ourWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        worlds().setMobs(world, mobs);
+        return ok(c, mobs ? "✓ Mobs spawn normally in " + world.name() + " again."
+                : "✓ No mobs spawn by themselves in " + world.name() + " any more (spawn eggs, /summon and breeding still work)."
+                + " Mobs already there stay until they despawn.");
+    }
+
+    private static int showHub(CommandContext<CommandSourceStack> c) {
+        return ok(c, "The hub is " + worlds().hub() + ". /hub goes to its spawn and new players start there."
+                + " Change it with /mv sethub <world>.");
+    }
+
+    private static int setHub(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        worlds().setHub(name);
+        return ok(c, "✓ The hub is now " + name + ". /hub goes to its spawn (set it with /mv setspawn while standing there),"
+                + " and players joining for the first time start there.");
     }
 
     /** Why {@code name} can't be used for a new world, or null if it can. */
@@ -243,7 +360,7 @@ public final class WorldCommand {
     private static int teleport(CommandContext<CommandSourceStack> c, ServerPlayer player) {
         String name = StringArgumentType.getString(c, "world");
         if (!VANILLA.contains(name) && worlds().world(name) == null) {
-            return fail(c, "No world named " + name + ". See /mvtp suggestions or ask an admin.");
+            return fail(c, "No world named " + name + ". See /mv list.");
         }
         boolean other = c.getSource().getPlayer() != player;
         if (other) {
@@ -317,7 +434,8 @@ public final class WorldCommand {
         String name = StringArgumentType.getString(c, "world");
         Worlds.World world = worlds().world(name);
         if (world == null) {
-            fail(c, VANILLA.contains(name) ? "world, nether and end always use group " + Worlds.MAIN_GROUP + "." : "No world named " + name + ".");
+            fail(c, VANILLA.contains(name) ? "world, nether and end are the vanilla worlds: this only works for worlds made with /mv create or /mv import"
+                    + " (they always use inventory group " + Worlds.MAIN_GROUP + ")." : "No world named " + name + ".");
         }
         return world;
     }
@@ -345,13 +463,14 @@ public final class WorldCommand {
         BlockPos a = sel.pos1(), b = sel.pos2();
         Portals.Entry portal = new Portals.Entry(name, sel.dimension(),
                 Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
-                Math.max(a.getX(), b.getX()), Math.max(a.getY(), b.getY()), Math.max(a.getZ(), b.getZ()), target, null);
+                Math.max(a.getX(), b.getX()), Math.max(a.getY(), b.getY()), Math.max(a.getZ(), b.getZ()), target, null, false);
         String overlap = portals().add(portal);
         if (overlap != null) {
             return fail(c, "That area overlaps portal " + overlap + ".");
         }
         return ok(c, "✓ Portal " + name + " created: " + portal.describe() + ". It leads to the spawn of " + target
-                + ". Nether/End portals inside it go there too. Use /mv portal setdest " + name + " to land somewhere else.");
+                + ". Nether/End portals inside it go there too. Use /mv portal setdest " + name + " to land somewhere else,"
+                + " or /mv portal water " + name + " to fill it with water.");
     }
 
     private static int setPortalDest(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
@@ -369,9 +488,47 @@ public final class WorldCommand {
                 + " players arrive in it and have to step out and back in to use it.");
     }
 
+    private static int waterPortal(CommandContext<CommandSourceStack> c) {
+        Portals.Entry portal = portals().portal(StringArgumentType.getString(c, "name"));
+        if (portal == null) {
+            return fail(c, "No portal named " + StringArgumentType.getString(c, "name") + ".");
+        }
+        ServerLevel level = portals().level(portal);
+        if (level == null) {
+            return fail(c, "The world of portal " + portal.name() + " isn't loaded.");
+        }
+        if (Portals.waterEvaporates(level, portal)) {
+            return fail(c, "Water evaporates in this world, so it can't hold a water portal.");
+        }
+        if (portal.volume() > Portals.MAX_WATER_BLOCKS) {
+            return fail(c, "Portal " + portal.name() + " is too big to fill with water (" + portal.volume() + " blocks, max "
+                    + Portals.MAX_WATER_BLOCKS + "). Select just the opening of the frame and create it again.");
+        }
+        int filled = portals().fillWater(portal, level);
+        return ok(c, "✓ Portal " + portal.name() + " is now a water portal (" + filled + " blocks filled). The water stays inside"
+                + " the portal area; players who walk in are sent on right away. Undo with /mv portal drain " + portal.name() + ".");
+    }
+
+    private static int drainPortal(CommandContext<CommandSourceStack> c) {
+        Portals.Entry portal = portals().portal(StringArgumentType.getString(c, "name"));
+        if (portal == null) {
+            return fail(c, "No portal named " + StringArgumentType.getString(c, "name") + ".");
+        }
+        int drained = portals().drainWater(portal, portals().level(portal));
+        return ok(c, "Portal " + portal.name() + " drained (" + drained + " water blocks removed). It's a normal portal again.");
+    }
+
     private static int deletePortal(CommandContext<CommandSourceStack> c) {
         String name = StringArgumentType.getString(c, "name");
-        return portals().remove(name) ? ok(c, "Portal " + name + " deleted. The blocks were not changed.") : fail(c, "No portal named " + name + ".");
+        Portals.Entry portal = portals().portal(name);
+        if (portal == null) {
+            return fail(c, "No portal named " + name + ".");
+        }
+        // Without the portal the water would flow out, so a water portal is drained first.
+        int drained = portal.water() ? portals().drainWater(portal, portals().level(portal)) : 0;
+        portals().remove(name);
+        return ok(c, drained > 0 ? "Portal " + name + " deleted and its water removed. Other blocks were not changed."
+                : "Portal " + name + " deleted. The blocks were not changed.");
     }
 
     private static int listPortals(CommandContext<CommandSourceStack> c) {
@@ -383,7 +540,7 @@ public final class WorldCommand {
         for (Portals.Entry portal : portals().portals()) {
             String to = portal.dest() == null ? portal.target() + " spawn"
                     : String.format("%s %.0f %.0f %.0f", portal.target(), portal.dest().x(), portal.dest().y(), portal.dest().z());
-            lines.add(" - " + portal.name() + ": " + portal.describe() + " -> " + to);
+            lines.add(" - " + portal.name() + (portal.water() ? " (water)" : "") + ": " + portal.describe() + " -> " + to);
         }
         return ok(c, String.join("\n", lines));
     }

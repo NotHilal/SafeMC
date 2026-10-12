@@ -3,6 +3,7 @@ package dev.safemc.safeplots.protect;
 import dev.safemc.safeplots.plot.ClaimSigns;
 import dev.safemc.safeplots.plot.Plot;
 import dev.safemc.safeplots.plot.PlotManager;
+import dev.safemc.safeplots.world.Worlds;
 import java.util.List;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -18,11 +19,19 @@ import net.minecraft.world.item.BucketItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.BellBlock;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ButtonBlock;
+import net.minecraft.world.level.block.CraftingTableBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.EnderChestBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.SignBlock;
-import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.piston.PistonStructureResolver;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -43,7 +52,8 @@ import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
 
 /**
  * All protection that NeoForge exposes as events. The rule everywhere: inside a plot, only the owner,
- * trusted players and admins with bypass may change anything. Things NeoForge has no event for
+ * trusted players and admins with bypass may change anything. The hub world (/mv sethub) is protected like one big
+ * plot that only admins may change, except that everyone may use doors, buttons and the like. Things NeoForge has no event for
  * (liquid flow, hoppers, fire burning, dispensers) are handled by the mixins in {@code dev.safemc.safeplots.mixin}.
  */
 public final class ProtectionEvents {
@@ -78,6 +88,12 @@ public final class ProtectionEvents {
 
         // An admin in sign-linking mode may place a sign anywhere; onPlace links it. Owners still follow the normal rules.
         if (manager.hasPendingSignLink(player.getUUID()) && PlotManager.isAdmin(player) && isSignItem(event.getItemStack())) {
+            return;
+        }
+
+        // In the hub everyone may open doors, press buttons etc. (unless sneaking with an item, which uses the item).
+        if (manager.plotAt(level, pos) == null && Worlds.protectedHub(level) && usableInHub(level.getBlockState(pos))
+                && !(player.isSecondaryUseActive() && !event.getItemStack().isEmpty())) {
             return;
         }
 
@@ -168,7 +184,7 @@ public final class ProtectionEvents {
             BlockPos pos = snapshot.getPos();
             boolean blocked = entity instanceof Player player
                     ? deny(manager, player, level, pos)
-                    : entity instanceof Enemy && manager.plotAt(level, pos) != null; // endermen placing blocks
+                    : entity instanceof Enemy && manager.isProtected(level, pos); // endermen placing blocks
             if (blocked) {
                 event.setCanceled(true);
                 return;
@@ -190,7 +206,7 @@ public final class ProtectionEvents {
         }
         boolean blocked = event.getEntity() instanceof Player player
                 ? !manager.canModify(player, level, event.getPos())
-                : manager.plotAt(level, event.getPos()) != null;
+                : manager.isProtected(level, event.getPos());
         if (blocked) {
             event.setCanceled(true);
         }
@@ -279,8 +295,8 @@ public final class ProtectionEvents {
         if (manager == null || level.isClientSide()) {
             return;
         }
-        event.getAffectedBlocks().removeIf(pos -> manager.plotAt(level, pos) != null || manager.plotForSign(level, pos) != null);
-        event.getAffectedEntities().removeIf(e -> isProtectedEntity(e) && manager.plotAt(level, e.blockPosition()) != null);
+        event.getAffectedBlocks().removeIf(pos -> manager.isProtected(level, pos) || manager.plotForSign(level, pos) != null);
+        event.getAffectedEntities().removeIf(e -> isProtectedEntity(e) && manager.isProtected(level, e.blockPosition()));
     }
 
     /** A piston may not push, pull or break blocks in a plot unless it is in that same plot (or same owner's plot). */
@@ -326,7 +342,7 @@ public final class ProtectionEvents {
         if (manager == null || !(entity instanceof Enemy) || !event.canGrief()) {
             return;
         }
-        if (manager.intersectsAnyPlot(entity.level(), entity.getBoundingBox().inflate(4.0))) {
+        if (Worlds.protectedHub(entity.level()) || manager.intersectsAnyPlot(entity.level(), entity.getBoundingBox().inflate(4.0))) {
             event.setCanGrief(false);
         }
     }
@@ -335,7 +351,7 @@ public final class ProtectionEvents {
     @SubscribeEvent
     public static void onLivingDestroyBlock(LivingDestroyBlockEvent event) {
         PlotManager manager = PlotManager.get();
-        if (manager != null && manager.plotAt(event.getEntity().level(), event.getPos()) != null) {
+        if (manager != null && manager.isProtected(event.getEntity().level(), event.getPos())) {
             event.setCanceled(true);
         }
     }
@@ -389,7 +405,17 @@ public final class ProtectionEvents {
         Plot plot = manager.plotAt(level, pos);
         if (plot != null) {
             Warnings.denied(manager, player, plot);
+        } else {
+            Warnings.warn(player, "Only staff can build in the hub.");
         }
         return true;
+    }
+
+    /** Blocks anyone may use in the hub: doors and switches, plus blocks that don't change the world. */
+    private static boolean usableInHub(BlockState state) {
+        Block block = state.getBlock();
+        return block instanceof DoorBlock || block instanceof TrapDoorBlock || block instanceof FenceGateBlock
+                || block instanceof ButtonBlock || block instanceof LeverBlock || block instanceof CraftingTableBlock
+                || block instanceof EnderChestBlock || block instanceof BellBlock;
     }
 }

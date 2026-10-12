@@ -1,6 +1,7 @@
 package dev.safemc.safeplots.inventory;
 
 import com.mojang.logging.LogUtils;
+import dev.safemc.safeplots.world.WorldRules;
 import dev.safemc.safeplots.world.Worlds;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -129,23 +130,38 @@ public final class WorldInventories {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onLogin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (instance != null && event.getEntity() instanceof ServerPlayer player) {
-            instance.sync(player); // e.g. their world was moved to another group while they were offline
+        if (event.getEntity() instanceof ServerPlayer player) {
+            arrived(player); // e.g. their world was moved to another group while they were offline
         }
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
-        if (instance != null && event.getEntity() instanceof ServerPlayer player) {
-            instance.sync(player);
+        if (event.getEntity() instanceof ServerPlayer player) {
+            arrived(player);
         }
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onRespawn(PlayerEvent.PlayerRespawnEvent event) {
-        if (instance != null && event.getEntity() instanceof ServerPlayer player) {
-            instance.sync(player);
+        if (event.getEntity() instanceof ServerPlayer player) {
+            arrived(player);
         }
+    }
+
+    /**
+     * Switches the inventory, then applies the world's game mode rule. The rule needs the game mode from before the
+     * switch, so it runs here rather than in its own event handler.
+     */
+    private static void arrived(ServerPlayer player) {
+        GameType previous = player.gameMode.getGameModeForPlayer();
+        boolean switched = false;
+        if (instance != null) {
+            String before = instance.currentGroup(player);
+            instance.sync(player);
+            switched = !before.equals(instance.currentGroup(player));
+        }
+        WorldRules.apply(player, previous, switched);
     }
 
     @SubscribeEvent
