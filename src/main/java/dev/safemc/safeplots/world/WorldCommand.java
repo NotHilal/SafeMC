@@ -25,13 +25,17 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.OwnableEntity;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.level.GameType;
 import org.jspecify.annotations.Nullable;
 
 /**
  * /mv create|delete|list|setspawn and /mvtp &lt;world&gt; [player] (admins), /hub (everyone, with the usual teleport
  * warm-up). Players get to other worlds by portal or /hub only.
- * {@code world}, {@code nether} and {@code end} are the vanilla dimensions.
+ * {@code world}, {@code nether} and {@code end} are the vanilla dimensions. Also /killall [world] [all] (admins).
  */
 public final class WorldCommand {
     private static final Pattern NAME = Pattern.compile("[a-z0-9_-]{1,32}");
@@ -52,6 +56,11 @@ public final class WorldCommand {
     private WorldCommand() {}
 
     public static void register(CommandDispatcher<CommandSourceStack> d) {
+        d.register(Commands.literal("killall").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                .executes(c -> killAll(c, null, false))
+                .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                        .executes(c -> killAll(c, StringArgumentType.getString(c, "world"), false))
+                        .then(Commands.literal("all").executes(c -> killAll(c, StringArgumentType.getString(c, "world"), true)))));
         d.register(Commands.literal("mv").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                 .executes(WorldCommand::list)
                 .then(Commands.literal("create")
@@ -89,6 +98,16 @@ public final class WorldCommand {
                                 .executes(WorldCommand::showMobs)
                                 .then(Commands.literal("on").executes(c -> setMobs(c, true)))
                                 .then(Commands.literal("off").executes(c -> setMobs(c, false)))))
+                .then(Commands.literal("alwaysday")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
+                                .executes(WorldCommand::showAlwaysDay)
+                                .then(Commands.literal("on").executes(c -> setAlwaysDay(c, true)))
+                                .then(Commands.literal("off").executes(c -> setAlwaysDay(c, false)))))
+                .then(Commands.literal("tnt")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::showTnt)
+                                .then(Commands.literal("on").executes(c -> setTnt(c, true)))
+                                .then(Commands.literal("off").executes(c -> setTnt(c, false)))))
                 .then(Commands.literal("sethub")
                         .executes(WorldCommand::showHub)
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
@@ -204,6 +223,55 @@ public final class WorldCommand {
         return ok(c, mobs ? "✓ Mobs spawn normally in " + world.name() + " again."
                 : "✓ No mobs spawn by themselves in " + world.name() + " any more (spawn eggs, /summon and breeding still work)."
                 + " Mobs already there stay until they despawn.");
+    }
+
+    private static Worlds.@Nullable World dayWorld(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        Worlds.World world = worlds().world(name);
+        if (world == null) {
+            fail(c, VANILLA.contains(name) ? "For " + name + " use /gamerule advance_time false and /weather clear instead."
+                    : "No world named " + name + ".");
+        }
+        return world;
+    }
+
+    private static int showAlwaysDay(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = dayWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        return ok(c, worlds().alwaysDay(world.name()) ? "It's always day without weather in " + world.name() + "."
+                : "Day, night and weather go on normally in " + world.name() + ".");
+    }
+
+    private static int setAlwaysDay(CommandContext<CommandSourceStack> c, boolean on) {
+        Worlds.World world = dayWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        worlds().setAlwaysDay(world.name(), on);
+        WorldRules.alwaysDayChanged(worlds(), world, on);
+        return ok(c, on ? "✓ It's always day in " + world.name() + " now, with no rain, snow or thunder."
+                + " Mobs still spawn as if it were the real time; use /mv mobs " + world.name() + " off to stop them."
+                : "✓ Day, night and weather go on normally in " + world.name() + " again.");
+    }
+
+    private static int showTnt(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        return ok(c, worlds().tnt(name) ? "TNT explodes in " + name + "." : "TNT doesn't explode in " + name + " (the default).");
+    }
+
+    private static int setTnt(CommandContext<CommandSourceStack> c, boolean tnt) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        worlds().setTnt(name, tnt);
+        return ok(c, tnt ? "✓ TNT explodes in " + name + " now."
+                : "✓ TNT no longer explodes in " + name + ": lit TNT and TNT minecarts just disappear, without damage.");
     }
 
     private static int showHub(CommandContext<CommandSourceStack> c) {
@@ -551,6 +619,41 @@ public final class WorldCommand {
             throw new IllegalStateException("SafePlots is not running");
         }
         return portals;
+    }
+
+    /**
+     * Removes the hostile mobs (or with {@code everyMob}, all mobs) of a world, without drops. Pets, mobs with a
+     * name tag, leashed mobs and BedWars shop keepers are always spared. Only loaded chunks have entities to remove.
+     */
+    private static int killAll(CommandContext<CommandSourceStack> c, @Nullable String name, boolean everyMob) {
+        ServerLevel level;
+        if (name == null) {
+            level = c.getSource().getLevel();
+            name = worlds().nameOf(level);
+            if (name == null) {
+                name = level.dimension().identifier().toString();
+            }
+        } else {
+            level = worlds().levelByName(name);
+            if (level == null) {
+                return fail(c, "No world named " + name + ".");
+            }
+        }
+        List<Entity> doomed = new ArrayList<>();
+        for (Entity entity : level.getAllEntities()) {
+            if (entity instanceof Mob mob && (everyMob || mob instanceof Enemy) && !spared(mob)) {
+                doomed.add(mob);
+            }
+        }
+        doomed.forEach(Entity::discard);
+        int n = doomed.size();
+        return ok(c, "✓ Removed " + n + (everyMob ? " mob" : " hostile mob") + (n == 1 ? "" : "s") + " in " + name
+                + ". Pets, named and leashed mobs were spared; mobs in unloaded areas aren't affected.");
+    }
+
+    private static boolean spared(Mob mob) {
+        return mob.hasCustomName() || mob.isLeashed() || mob.entityTags().contains("safebedwars")
+                || (mob instanceof OwnableEntity pet && pet.getOwnerReference() != null);
     }
 
     private static Worlds worlds() {

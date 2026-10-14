@@ -781,6 +781,23 @@ public final class SelfTest {
         expect(normal.getBlockState(hb).is(Blocks.STONE), "explosions don't break the hub");
         String hubClaim = dev.safemc.safeplots.plot.SelfClaims.problem(pm, walker, dev.safemc.safeplots.plot.SelfClaims.candidate(pm, walker));
         expect(hubClaim != null && hubClaim.contains("hub"), "players can't /plot claimhere in the hub");
+        walker.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+        // Real clients confirm loading and arriving in a world; until then players can't be hurt, which would hide the rule.
+        walker.connection.markClientLoaded();
+        walker.hasChangedDimension();
+        walker.setHealth(walker.getMaxHealth());
+        walker.hurtServer(normal, normal.damageSources().generic(), 5);
+        walker.hurtServer(normal, normal.damageSources().playerAttack(walker), 5);
+        expect(walker.getHealth() == walker.getMaxHealth(), "nobody takes damage in the hub");
+        walker.teleportTo(normal, hubSpawn.pos().x, normal.getMinY() - 70, hubSpawn.pos().z, java.util.Set.of(), 0, 0, true);
+        walker.hasChangedDimension();
+        walker.hurtServer(normal, normal.damageSources().fellOutOfWorld(), 4);
+        expect(walker.getHealth() == walker.getMaxHealth() && walker.position().distanceTo(hubSpawn.pos()) < 2,
+                "falling into the hub's void takes you back to its spawn (health " + walker.getHealth() + ", at " + walker.position()
+                + ", spawn " + hubSpawn.pos() + ", in " + walker.level().dimension().identifier() + ")");
+        walker.getFoodData().setFoodLevel(3);
+        dev.safemc.safeplots.world.Hub.feed(worlds);
+        expect(walker.getFoodData().getFoodLevel() == 20, "hunger stays full in the hub");
         ServerPlayer hubAdmin = fakePlayer(server, "HubAdmin");
         server.getPlayerList().op(hubAdmin.nameAndId());
         hubAdmin.teleportTo(normal, hubSpawn.pos().x, hubSpawn.pos().y, hubSpawn.pos().z, java.util.Set.of(), 0, 0, true);
@@ -911,22 +928,101 @@ public final class SelfTest {
         java.nio.file.Files.createDirectories(dir.resolve("old"));
         net.minecraft.nbt.NbtIo.writeCompressed(v2, dir.resolve("old/st_path.schem"));
 
+        // MCEdit / WorldEdit 6, 4 x 1 x 2. Row z=0: granite (1:1), oak stairs facing north (53:3), a flower pot with a
+        // poppy (140 + FlowerPot block entity), a bed head (26:10). Row z=1: a chest facing north (54:2) with an
+        // old-style "Chest" block entity holding 5 diamonds, red wool (35:14), a note block (25 + Music, note 5), the
+        // bed's foot facing north (26:2). The bed is blue (color 11 in its Bed block entities).
         CompoundTag legacy = new CompoundTag();
-        legacy.putShort("Width", (short) 1);
+        legacy.putShort("Width", (short) 4);
         legacy.putShort("Height", (short) 1);
-        legacy.putShort("Length", (short) 1);
+        legacy.putShort("Length", (short) 2);
         legacy.putString("Materials", "Alpha");
+        legacy.putByteArray("Blocks", new byte[] {1, 53, (byte) 140, 26, 54, 35, 25, 26});
+        legacy.putByteArray("Data", new byte[] {1, 3, 0, 10, 2, 14, 0, 2});
+        CompoundTag oldItem = new CompoundTag();
+        oldItem.putByte("Slot", (byte) 0);
+        oldItem.putString("id", "minecraft:diamond");
+        oldItem.putByte("Count", (byte) 5);
+        oldItem.putShort("Damage", (short) 0);
+        net.minecraft.nbt.ListTag oldItems = new net.minecraft.nbt.ListTag();
+        oldItems.add(oldItem);
+        CompoundTag oldChest = new CompoundTag();
+        oldChest.putString("id", "Chest");
+        oldChest.putInt("x", 0);
+        oldChest.putInt("y", 0);
+        oldChest.putInt("z", 1);
+        oldChest.put("Items", oldItems);
+        net.minecraft.nbt.ListTag oldBes = new net.minecraft.nbt.ListTag();
+        oldBes.add(oldChest);
+        CompoundTag oldPot = new CompoundTag();
+        oldPot.putString("id", "FlowerPot");
+        oldPot.putInt("x", 2);
+        oldPot.putInt("y", 0);
+        oldPot.putInt("z", 0);
+        oldPot.putString("Item", "minecraft:red_flower");
+        oldPot.putInt("Data", 0);
+        oldBes.add(oldPot);
+        CompoundTag oldNote = new CompoundTag();
+        oldNote.putString("id", "minecraft:noteblock");
+        oldNote.putInt("x", 2);
+        oldNote.putInt("y", 0);
+        oldNote.putInt("z", 1);
+        oldNote.putByte("note", (byte) 5);
+        oldNote.putByte("powered", (byte) 0);
+        oldBes.add(oldNote);
+        for (int bedZ = 0; bedZ <= 1; bedZ++) {
+            CompoundTag oldBed = new CompoundTag();
+            oldBed.putString("id", "minecraft:bed");
+            oldBed.putInt("x", 3);
+            oldBed.putInt("y", 0);
+            oldBed.putInt("z", bedZ);
+            oldBed.putInt("color", 11);
+            oldBes.add(oldBed);
+        }
+        legacy.put("TileEntities", oldBes);
+        legacy.putInt("WEOffsetX", -1);
         net.minecraft.nbt.NbtIo.writeCompressed(legacy, dir.resolve("st_legacy.schematic"));
+
+        CompoundTag pocket = new CompoundTag();
+        pocket.putShort("Width", (short) 1);
+        pocket.putShort("Height", (short) 1);
+        pocket.putShort("Length", (short) 1);
+        pocket.putString("Materials", "Pocket");
+        net.minecraft.nbt.NbtIo.writeCompressed(pocket, dir.resolve("st_pocket.schematic"));
 
         expect(manager.available().containsAll(List.of("st_house", "old/st_path", "st_legacy")), "/schem list finds files, also in subfolders");
         expect(manager.resolve("../safeplots.json") == null && manager.resolve("st_house") != null, "names can't leave the schematics folder");
+        var legacySchem = dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_legacy"), "st_legacy", server.registryAccess(), 1000);
+        java.util.function.IntFunction<net.minecraft.world.level.block.state.BlockState> cell = i -> legacySchem.palette()[legacySchem.blocks()[i]];
+        expect(legacySchem.size().equals("4 x 1 x 2") && legacySchem.unknownBlocks() == 0, "old .schematic read: " + legacySchem.size()
+                + ", " + legacySchem.unknownBlocks() + " unknown");
+        expect(cell.apply(0).is(Blocks.GRANITE), "1:1 is granite: " + cell.apply(0));
+        expect(cell.apply(1).is(Blocks.OAK_STAIRS) && cell.apply(1).getValue(net.minecraft.world.level.block.StairBlock.FACING) == Direction.NORTH,
+                "53:3 is oak stairs facing north: " + cell.apply(1));
+        expect(cell.apply(4).is(Blocks.CHEST) && cell.apply(4).getValue(net.minecraft.world.level.block.ChestBlock.FACING) == Direction.NORTH,
+                "54:2 is a chest facing north: " + cell.apply(4));
+        expect(cell.apply(5).is(Blocks.WOOL.pick(net.minecraft.world.item.DyeColor.RED)), "35:14 is red wool: " + cell.apply(5));
+        expect(cell.apply(2).is(Blocks.POTTED_POPPY) && !legacySchem.blockEntities().containsKey(2),
+                "old flower pot with a poppy becomes potted_poppy: " + cell.apply(2));
+        net.minecraft.world.level.block.Block blueBed = Blocks.BED.pick(net.minecraft.world.item.DyeColor.BLUE);
+        expect(cell.apply(3).is(blueBed) && cell.apply(7).is(blueBed)
+                && cell.apply(3).getValue(net.minecraft.world.level.block.BedBlock.PART) == net.minecraft.world.level.block.state.properties.BedPart.HEAD
+                && cell.apply(7).getValue(net.minecraft.world.level.block.BedBlock.FACING) == Direction.NORTH,
+                "old bed with color 11 becomes a blue bed, head and foot: " + cell.apply(3) + " / " + cell.apply(7));
+        expect(cell.apply(6).is(Blocks.NOTE_BLOCK) && cell.apply(6).getValue(net.minecraft.world.level.block.NoteBlock.NOTE) == 5
+                && !legacySchem.blockEntities().containsKey(6), "old note block keeps its pitch: " + cell.apply(6));
+        CompoundTag legacyChest = legacySchem.blockEntities().get(4);
+        expect(legacyChest != null && legacyChest.getStringOr("id", "").equals("minecraft:chest")
+                && legacyChest.toString().contains("minecraft:diamond") && legacyChest.toString().contains("count:5"),
+                "old Chest block entity upgraded with its 5 diamonds: " + legacyChest);
+        expect(legacySchem.offset().equals(new BlockPos(-1, 0, 0)), "WorldEdit 6 paste offset kept");
         boolean refused = false;
         try {
-            dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_legacy"), "st_legacy", server.registryAccess(), 1000);
+            dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_pocket"), "st_pocket", server.registryAccess(), 1000);
         } catch (java.io.IOException e) {
-            refused = e.getMessage().contains("MCEdit");
+            refused = e.getMessage().contains("Pocket");
         }
-        expect(refused, "old MCEdit .schematic files are refused with an explanation");
+        expect(refused, "Bedrock (Pocket) schematics are refused with an explanation");
 
         var house = dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_house"), "st_house", server.registryAccess(), 1000);
         expect(house.width() == 3 && house.height() == 2 && house.length() == 2 && house.blockEntities().size() == 1, "v3 schematic read");

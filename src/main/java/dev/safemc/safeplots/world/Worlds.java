@@ -146,6 +146,10 @@ public final class Worlds {
     private final Set<String> pendingDeletes = new TreeSet<>();
     /** The /mvtp name of the hub: where /hub goes and new players start. */
     private String hub = "world";
+    /** /mvtp names of the worlds where TNT explodes ({@code /mv tnt <world> on}). Everywhere else it doesn't. */
+    private final Set<String> tntWorlds = new TreeSet<>();
+    /** Names of our worlds that stay at noon without weather ({@code /mv alwaysday <world> on}). */
+    private final Set<String> alwaysDay = new TreeSet<>();
     private final Map<ResourceKey<Level>, Spawn> vanillaSpawns = new HashMap<>();
 
     private Worlds(MinecraftServer server, Path file) {
@@ -324,6 +328,8 @@ public final class Worlds {
             NeoForge.EVENT_BUS.post(new LevelEvent.Unload(level));
         }
         worlds.remove(world.name());
+        tntWorlds.remove(world.name());
+        alwaysDay.remove(world.name());
         if (hub.equals(world.name())) {
             hub = "world";
         }
@@ -352,6 +358,44 @@ public final class Worlds {
 
     public void setMobs(World world, boolean mobs) {
         worlds.put(world.name(), world.withMobs(mobs));
+        save();
+    }
+
+    /** {@code name} is a /mvtp name: {@code world}, {@code nether}, {@code end} or one of ours. */
+    public boolean tnt(String name) {
+        return tntWorlds.contains(name);
+    }
+
+    /** Whether TNT explodes in this level. Off unless turned on for the world, also in other mods' dimensions. */
+    public boolean tnt(Level level) {
+        String name = nameOf(level);
+        return name != null && tnt(name);
+    }
+
+    public boolean alwaysDay(String name) {
+        return alwaysDay.contains(name);
+    }
+
+    public boolean alwaysDay(Level level) {
+        World world = worldOf(level);
+        return world != null && alwaysDay.contains(world.name());
+    }
+
+    public void setAlwaysDay(String name, boolean on) {
+        if (on) {
+            alwaysDay.add(name);
+        } else {
+            alwaysDay.remove(name);
+        }
+        save();
+    }
+
+    public void setTnt(String name, boolean tnt) {
+        if (tnt) {
+            tntWorlds.add(name);
+        } else {
+            tntWorlds.remove(name);
+        }
         save();
     }
 
@@ -530,6 +574,12 @@ public final class Worlds {
         if (root.has("hub")) {
             hub = root.get("hub").getAsString();
         }
+        if (root.has("tnt")) {
+            root.getAsJsonArray("tnt").forEach(el -> tntWorlds.add(el.getAsString()));
+        }
+        if (root.has("alwaysDay")) {
+            root.getAsJsonArray("alwaysDay").forEach(el -> alwaysDay.add(el.getAsString()));
+        }
     }
 
     private void save() {
@@ -565,6 +615,12 @@ public final class Worlds {
         }
         if (!hub.equals("world")) {
             root.addProperty("hub", hub);
+        }
+        if (!tntWorlds.isEmpty()) {
+            root.add("tnt", GSON.toJsonTree(tntWorlds));
+        }
+        if (!alwaysDay.isEmpty()) {
+            root.add("alwaysDay", GSON.toJsonTree(alwaysDay));
         }
         try {
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");

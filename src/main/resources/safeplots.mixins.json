@@ -8,6 +8,7 @@
     "FlowingFluidMixin",
     "HopperBlockEntityMixin",
     "LavaFluidMixin",
+    "LevelWeatherMixin",
     "MinecraftServerAccessor",
     "PortalBlockMixin",
     "ServerPlayerMixin",

@@ -299,6 +299,10 @@ Admins can add worlds while the server runs, like Multiverse. Each one is a norm
 | `/hub` | **Everyone**: back to the hub's spawn, with the usual 3 s warm-up and cooldown |
 | `/mv gamemode <world> <mode>` | Everyone arriving in that world is put in `survival`, `creative`, `adventure` or `spectator` mode; `none` removes the rule (see [World rules](#world-rules)) |
 | `/mv mobs <world> on\|off` | Turns natural mob spawning in that world on or off |
+| `/mv alwaysday <world> on\|off` | Always noon and no weather (rain, snow, thunder) in that world |
+| `/killall [world]` | Removes all hostile mobs in that world (without a world: the one you're in). No drops. Pets, mobs with a name tag, leashed mobs and BedWars shop villagers are spared. Only loaded areas (near players) |
+| `/killall <world> all` | Same, but removes every mob (animals, villagers, ...), still sparing pets, named and leashed mobs |
+| `/mv tnt <world> on\|off` | TNT is **off everywhere by default**; this turns it on (or off again) for one world. Also works for `world`, `nether` and `end` |
 | `/mv sethub <world>` | Makes that world the hub: `/hub` goes to its spawn and players joining for the first time start there. `world` (the default) = the main world. Without `<world>`, shows the current hub |
 
 The first visit picks a safe spot near 0,0 as the spawn (a void world gets a small stone platform). Worlds
@@ -333,7 +337,15 @@ For worlds made with `/mv create` or `/mv import`. For example, a creative world
 - **`/mv mobs <world> off`**: no mobs spawn there by themselves: no natural spawns, none from world generation,
   structures, spawners, patrols or wandering traders. Spawn eggs, `/summon`, breeding and buckets still work.
   Mobs already there stay until they despawn.
-- Without a value, both commands show the current setting.
+- **`/mv tnt <world> on`**: TNT is **off in every world by default**: lit TNT and TNT minecarts just disappear,
+  without damage. This turns it on for one world (`off` turns it off again). Unlike the other rules this also works
+  for the vanilla worlds (`world`, `nether`, `end`); other mods' dimensions always stay off. For example, TNT only
+  in a BedWars world: `/mv tnt bedwars on`. Creepers, beds and end crystals still explode.
+- **`/mv alwaysday <world> on`**: it's always noon there and there is no weather. All worlds share one clock,
+  so players there are shown noon while the real time goes on: mobs still spawn when it's really night (add
+  `/mv mobs <world> off`), and beds work by the real time. For the vanilla worlds use `/gamerule advance_time false`
+  and `/weather clear` instead.
+- Without a value, these commands show the current setting.
 
 #### Hub
 
@@ -346,7 +358,9 @@ The hub world is protected like one big plot that only staff (ops) can change, w
 players can't break or place blocks, pour buckets, light fires, hurt animals or break item frames there, and
 explosions, fire and mobs don't damage it. Everyone can still open doors, trapdoors and gates, press buttons,
 flip levers, ring bells and use crafting tables and ender chests. Nobody can `/plot claimhere` in the hub, but
-admins can still make sign plots there (e.g. shops), which follow the normal plot rules. The main world is never
+admins can still make sign plots there (e.g. shops), which follow the normal plot rules. Nobody takes any damage
+in the hub (falling into its void takes you back to its spawn; `/kill` still works) and hunger stays full. The main
+world is never
 protected this way, so this only applies after `/mv sethub` picks another world.
 
 #### Portals
@@ -392,9 +406,10 @@ and its own nether: `/mv group skyblock_nether skyblock`.
 
 ### Schematics (/schem)
 
-Paste buildings from `.schem` files without WorldEdit. Admins only. Put the files in `<server>/schematics/`
-(subfolders are fine: `/schem load houses/tower`). Files from WorldEdit 7+, FAWE, Axiom and most schematic
-websites use this format (Sponge schematic, versions 1-3).
+Paste buildings from `.schem` and `.schematic` files without WorldEdit. Admins only. Put the files in
+`<server>/schematics/` (subfolders are fine: `/schem load houses/tower`). Supported: `.schem` from WorldEdit 7+,
+FAWE, Axiom and most schematic websites (Sponge schematic, versions 1-3), and old `.schematic` files from MCEdit
+and WorldEdit 6 (Minecraft 1.12 and older).
 
 | Command | What it does |
 |---|---|
@@ -409,10 +424,12 @@ websites use this format (Sponge schematic, versions 1-3).
 - Blocks appear without physics: sand doesn't fall, water doesn't flow and torches don't drop while the
   build is placed. Chests, signs, banners etc. keep their contents.
 - Big builds are placed over several ticks so the server doesn't freeze (about 1 million blocks in 5 s).
-- Schematics saved by older Minecraft versions are upgraded (e.g. `grass_path` becomes `dirt_path`).
-  Blocks from mods that aren't installed become air (you're told how many).
-- Not supported yet: entities in the schematic (item frames, armor stands, paintings), biomes, and the old
-  pre-1.13 MCEdit `.schematic` format (re-save those as `.schem` with WorldEdit 7). Maximum size 32 million blocks.
+- Schematics saved by older Minecraft versions are upgraded (e.g. `grass_path` becomes `dirt_path`). Old
+  `.schematic` files with number ids (like `35:14` for red wool) are translated with the same table Minecraft
+  uses to upgrade pre-1.13 worlds, including chest contents, sign text, bed and banner colors, flower pot plants,
+  skulls and note blocks. Blocks from mods that aren't installed become air (you're told how many).
+- Not supported yet: entities in the schematic (item frames, armor stands, paintings), biomes, and Bedrock
+  (Pocket Edition) schematics. Maximum size 32 million blocks.
 - Pastes ignore plot protection: an admin can paste anywhere. Clipboards and undo history are reset by a restart.
 
 ### Deliberate simplifications (V1)

@@ -2,12 +2,22 @@ package dev.safemc.safeplots.world;
 
 import dev.safemc.safeplots.teleport.Teleports;
 import java.util.Set;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.stats.Stats;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.food.FoodData;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
-/** Players joining for the first time start at the spawn of the hub world ({@code /mv sethub}). */
+/**
+ * Players joining for the first time start at the spawn of the hub world ({@code /mv sethub}). In the hub nobody
+ * takes damage (falling into the void takes you back to its spawn; /kill still works) or gets hungry.
+ */
 public final class Hub {
     private Hub() {}
 
@@ -21,6 +31,47 @@ public final class Hub {
         if (player.getStats().getValue(Stats.CUSTOM.get(Stats.LEAVE_GAME)) > 0) {
             return;
         }
+        toSpawn(worlds, player);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onDamage(LivingIncomingDamageEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player) || !Worlds.protectedHub(player.level())) {
+            return;
+        }
+        DamageSource source = event.getSource();
+        if (source.is(DamageTypes.GENERIC_KILL)) {
+            return; // /kill
+        }
+        event.setCanceled(true);
+        if (source.is(DamageTypes.FELL_OUT_OF_WORLD) && Worlds.get() != null) {
+            toSpawn(Worlds.get(), player);
+            player.resetFallDistance();
+        }
+    }
+
+    /** Full hunger in the hub, topped up every second. */
+    @SubscribeEvent
+    public static void onServerTick(ServerTickEvent.Post event) {
+        Worlds worlds = Worlds.get();
+        if (worlds != null && event.getServer().getTickCount() % 20 == 0) {
+            feed(worlds);
+        }
+    }
+
+    public static void feed(Worlds worlds) {
+        ServerLevel hub = worlds.levelByName(worlds.hub());
+        if (hub == null || !Worlds.protectedHub(hub)) {
+            return;
+        }
+        for (ServerPlayer player : hub.players()) {
+            FoodData food = player.getFoodData();
+            food.setFoodLevel(20);
+            food.setSaturation(5.0F);
+        }
+    }
+
+    private static void toSpawn(Worlds worlds, ServerPlayer player) {
         Teleports.Destination dest = worlds.spawnDestination(worlds.hub());
         if (dest != null) {
             player.teleportTo(dest.level(), dest.pos().x, dest.pos().y, dest.pos().z, Set.of(), dest.yRot(), dest.xRot(), true);

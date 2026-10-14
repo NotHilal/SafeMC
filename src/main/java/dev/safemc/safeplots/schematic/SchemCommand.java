@@ -21,7 +21,8 @@ import net.minecraft.world.level.block.Rotation;
 
 /**
  * /schem list|load|info|rotate|paste|undo. Admins only. Put {@code .schem} files (from WorldEdit, Axiom,
- * schematic websites, ...) in {@code <server>/schematics/}, load one, then paste it where you stand.
+ * schematic websites, ...) or old MCEdit {@code .schematic} files in {@code <server>/schematics/}, load one,
+ * then paste it where you stand.
  */
 public final class SchemCommand {
     private static final int LIST_LIMIT = 60;
@@ -51,7 +52,7 @@ public final class SchemCommand {
     private static int list(CommandContext<CommandSourceStack> c) {
         List<String> names = schematics().available();
         if (names.isEmpty()) {
-            return ok(c, "No schematics yet. Put .schem files in " + schematics().dir() + ", then /schem load <name>.");
+            return ok(c, "No schematics yet. Put .schem or .schematic files in " + schematics().dir() + ", then /schem load <name>.");
         }
         String shown = String.join(", ", names.subList(0, Math.min(names.size(), LIST_LIMIT)));
         return ok(c, "Schematics (" + names.size() + "): " + shown + (names.size() > LIST_LIMIT ? ", ..." : "")
