@@ -15,13 +15,19 @@ import net.minecraft.world.clock.ClockNetworkState;
 import net.minecraft.world.clock.WorldClock;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.vehicle.minecart.MinecartTNT;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.event.entity.EntityTravelToDimensionEvent;
 import net.neoforged.neoforge.event.entity.living.FinalizeSpawnEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.ExplosionEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.jspecify.annotations.Nullable;
@@ -29,7 +35,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * Per-world rules: {@code /mv gamemode} (everyone there is put in that game mode), {@code /mv mobs} (no natural
  * mob spawning), {@code /mv tnt} (TNT only explodes in worlds where it was turned on) and {@code /mv alwaysday}
- * (noon and no weather). The game mode applies to admins too; they can still change it with /gamemode while there.
+ * (noon and no weather) and {@code /mv hunger} (food stays full). The game mode applies to admins too; they can still change it with /gamemode while there.
  * <p>The player's own game mode is remembered when they enter a world with a forced one and given back when they
  * arrive in a world without one. That matters when both worlds share an inventory group; otherwise switching
  * inventories already restores it.
@@ -118,6 +124,19 @@ public final class WorldRules {
         }
     }
 
+    /**
+     * Unless {@code /mv crystals <world> on}, a destroyed end crystal just breaks without exploding. The dragon fight
+     * still works: a crystal that is gone stops healing the dragon, exploded or not.
+     */
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onCrystalExplosion(ExplosionEvent.Start event) {
+        Worlds worlds = Worlds.get();
+        if (worlds == null || !(event.getExplosion().getDirectSourceEntity() instanceof EndCrystal) || worlds.crystals(event.getLevel())) {
+            return;
+        }
+        event.setCanceled(true);
+    }
+
     // ---------------------------------------------------------------- always day
 
     /** Noon of the current day, the time players in an always-day world see. */
@@ -142,9 +161,16 @@ public final class WorldRules {
             ClockNetworkState noon = new ClockNetworkState(Math.floorDiv(total, DAY) * DAY + NOON, 0.0F, 0.0F);
             player.connection.send(new ClientboundSetTimePacket(server.overworld().getGameTime(), Map.of(clock, noon)));
         }
-        player.connection.send(new ClientboundGameEventPacket(ClientboundGameEventPacket.STOP_RAINING, 0.0F));
+        // Not STOP_RAINING: the client handles that by setting the rain to full strength so it can fade out, which
+        // repeated every second made rain flash on and off.
         player.connection.send(new ClientboundGameEventPacket(ClientboundGameEventPacket.RAIN_LEVEL_CHANGE, 0.0F));
         player.connection.send(new ClientboundGameEventPacket(ClientboundGameEventPacket.THUNDER_LEVEL_CHANGE, 0.0F));
+    }
+
+    /** In a world with {@code /mv hunger off}: full food bar, so nobody starves or has to eat. */
+    public static void feed(ServerPlayer player) {
+        player.getFoodData().setFoodLevel(20);
+        player.getFoodData().setSaturation(5.0F);
     }
 
     /** After {@code /mv alwaysday} changed: players already there see the change right away. */
@@ -166,6 +192,33 @@ public final class WorldRules {
         }
     }
 
+    /** {@code /mv endportal off}: no eye of ender goes in an end portal frame. */
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onUseOnFrame(PlayerInteractEvent.RightClickBlock event) {
+        Worlds worlds = Worlds.get();
+        if (worlds == null || worlds.endPortal() || event.getLevel().isClientSide()
+                || !event.getItemStack().is(Items.ENDER_EYE) || !event.getLevel().getBlockState(event.getPos()).is(Blocks.END_PORTAL_FRAME)) {
+            return;
+        }
+        event.setCanceled(true);
+        event.getEntity().sendSystemMessage(Component.literal("The End portal is turned off on this server.").withStyle(ChatFormatting.RED));
+    }
+
+    /** {@code /mv endportal off}: a lit end portal (one made before, or a natural one) takes nobody to the End. */
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public static void onTravelToEnd(EntityTravelToDimensionEvent event) {
+        Worlds worlds = Worlds.get();
+        Entity entity = event.getEntity();
+        if (worlds == null || worlds.endPortal() || entity.level().isClientSide() || event.getDimension() != Level.END
+                || !entity.level().getBlockState(entity.blockPosition()).is(Blocks.END_PORTAL)) {
+            return; // not through an end portal (e.g. /mvtp end)
+        }
+        event.setCanceled(true);
+        if (entity instanceof ServerPlayer player && player.tickCount % 40 == 0) {
+            player.sendSystemMessage(Component.literal("The End portal is turned off on this server.").withStyle(ChatFormatting.RED));
+        }
+    }
+
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         Worlds worlds = Worlds.get();
@@ -175,6 +228,9 @@ public final class WorldRules {
         for (ServerLevel level : event.getServer().getAllLevels()) {
             if (worlds.alwaysDay(level)) {
                 level.players().forEach(WorldRules::sendSky);
+            }
+            if (!worlds.hunger(level)) {
+                level.players().forEach(WorldRules::feed);
             }
         }
     }

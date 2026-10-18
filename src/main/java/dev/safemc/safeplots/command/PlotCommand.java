@@ -11,6 +11,7 @@ import dev.safemc.safeplots.plot.Plot;
 import dev.safemc.safeplots.plot.PlotBorders;
 import dev.safemc.safeplots.plot.PlotManager;
 import dev.safemc.safeplots.plot.SelfClaims;
+import dev.safemc.safeplots.world.Worlds;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -71,6 +72,7 @@ public final class PlotCommand {
                 // ---- player commands
                 .then(Commands.literal("claimhere").executes(PlotCommand::claimHere))
                 .then(Commands.literal("confirm").executes(PlotCommand::confirm))
+                .then(Commands.literal("list").executes(PlotCommand::listMine))
                 .then(Commands.literal("trust")
                         .then(Commands.argument("player", GameProfileArgument.gameProfile())
                                 .executes(c -> trust(c, true, null))
@@ -126,7 +128,7 @@ public final class PlotCommand {
                         .then(Commands.argument("player", GameProfileArgument.gameProfile())
                                 .then(Commands.argument("amount", IntegerArgumentType.integer())
                                         .executes(c -> limit(c, true, IntegerArgumentType.getInteger(c, "amount"))))))
-                .then(Commands.literal("list").requires(ADMIN)
+                .then(Commands.literal("showall").requires(ADMIN)
                         .executes(PlotCommand::listAll)
                         .then(Commands.argument("player", GameProfileArgument.gameProfile()).executes(PlotCommand::listPlayer)))
                 .then(Commands.literal("info").requires(ADMIN)
@@ -209,10 +211,12 @@ public final class PlotCommand {
         if (problem != null) {
             return fail(c, problem);
         }
-        Plot plot = manager.plotsOwnedBy(player.getUUID()).stream().filter(Plot::selfClaimed).findFirst().orElseThrow();
-        PlotBorders.show(player, plot);
+        // The one just made (a world may allow several self-made plots): same corners as the candidate.
+        Plot plot = manager.plotsOwnedBy(player.getUUID(), candidate.dimension()).stream()
+                .filter(p -> p.min().equals(candidate.min()) && p.max().equals(candidate.max())).findFirst().orElseThrow();
+        PlotBorders.hide(player.getUUID());
         return ok(c, "✓ Plot claimed: " + plot.name() + ". Only you (and players you /plot trust) can build here."
-                + " Run /plot showlimits to hide the border.");
+                + " Run /plot showlimits to see its border again.");
     }
 
     private static int abandon(CommandContext<CommandSourceStack> c, @Nullable String plotName) throws CommandSyntaxException {
@@ -406,7 +410,7 @@ public final class PlotCommand {
             return null;
         }
         BlockPos a = sel.pos1(), b = sel.pos2();
-        if (height.exact()) {
+        if (height.exact() && !creativeWorld(level)) {
             return new BlockPos[] {a, b};
         }
         // "full": the whole column from bedrock to build limit, so nobody can build over or dig under.
@@ -417,6 +421,13 @@ public final class PlotCommand {
             return null;
         }
         return new BlockPos[] {new BlockPos(a.getX(), ys[0], a.getZ()), new BlockPos(b.getX(), ys[1], b.getZ())};
+    }
+
+    /** In a world with /mv gamemode creative, plots are always full height unless a height is given. */
+    private static boolean creativeWorld(ServerLevel level) {
+        Worlds worlds = Worlds.get();
+        Worlds.World world = worlds == null ? null : worlds.worldOf(level);
+        return world != null && world.gameMode() == net.minecraft.world.level.GameType.CREATIVE;
     }
 
     private static int @Nullable [] heightRange(CommandContext<CommandSourceStack> c, ServerLevel level, int minY, @Nullable Integer maxY) {
@@ -495,7 +506,33 @@ public final class PlotCommand {
         manager.setMaxClaims(target.id(), newLimit);
         int owned = manager.plotsOwnedBy(target.id()).size();
         String note = owned > newLimit ? " They keep the " + owned + " plots they already own." : "";
-        return ok(c, target.name() + " can now own " + newLimit + " plot" + (newLimit == 1 ? "" : "s") + " (owns " + owned + ")." + note);
+        return ok(c, target.name() + " can now own " + newLimit + " plot" + (newLimit == 1 ? "" : "s") + " in each world"
+                + " (more where /mv claims allows more; owns " + owned + " in all)." + note);
+    }
+
+    /** /plot list: your plots in the world you're in, with where they are. */
+    private static int listMine(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        PlotManager manager = manager();
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        String dimension = PlotManager.dimensionId(player.level());
+        List<Plot> mine = manager.plotsOwnedBy(player.getUUID(), dimension);
+        int max = manager.maxClaims(player.getUUID(), dimension);
+        Worlds worlds = Worlds.get();
+        String world = worlds == null ? null : worlds.nameOf(player.level());
+        String where = world == null ? "this world" : world;
+        if (mine.isEmpty()) {
+            return ok(c, max == 0 ? "You have no plots in " + where + ", and plots can't be claimed here."
+                    : "You have no plots in " + where + " (you may have " + max + "). Make one with /plot claimhere.");
+        }
+        List<String> lines = new ArrayList<>();
+        lines.add("Your plots in " + where + " (" + mine.size() + "/" + max + "):");
+        for (Plot plot : mine) {
+            BlockPos min = plot.min(), max2 = plot.max();
+            int sizeX = max2.getX() - min.getX() + 1, sizeZ = max2.getZ() - min.getZ() + 1;
+            lines.add(" - " + plot.name() + ": center " + SelfClaims.center(plot) + ", from " + min.getX() + ", " + min.getZ()
+                    + " to " + max2.getX() + ", " + max2.getZ() + " (" + sizeX + "x" + sizeZ + ", Y " + min.getY() + " to " + max2.getY() + ")");
+        }
+        return ok(c, String.join("\n", lines));
     }
 
     private static int listAll(CommandContext<CommandSourceStack> c) {
@@ -521,7 +558,8 @@ public final class PlotCommand {
         }
         List<Plot> owned = manager.plotsOwnedBy(target.id());
         String names = owned.isEmpty() ? "none" : String.join(", ", owned.stream().map(Plot::name).toList());
-        return ok(c, target.name() + " owns " + owned.size() + "/" + manager.maxClaims(target.id()) + " plots: " + names);
+        return ok(c, target.name() + " owns " + owned.size() + " plot" + (owned.size() == 1 ? "" : "s") + ": " + names
+                + ". Their limit is " + manager.maxClaims(target.id()) + " per world (more where /mv claims allows more).");
     }
 
     private static int info(CommandContext<CommandSourceStack> c, @Nullable String name) throws CommandSyntaxException {

@@ -32,6 +32,8 @@ import net.minecraft.util.datafix.fixes.References;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 
 /**
@@ -279,7 +281,12 @@ public final class SchematicReader {
                 try {
                     blockState = BlockStateParser.parseForBlock(blockLookup, upgradeState(fixer, state, FLATTENING_DATA_VERSION, current), false).blockState();
                 } catch (CommandSyntaxException e) {
-                    unknown++;
+                    BlockState lenient = lenientState(blockLookup, fixer, states[i], current);
+                    if (lenient == null) {
+                        unknown++;
+                    } else {
+                        blockState = lenient;
+                    }
                 }
                 index = palette.size();
                 palette.add(blockState);
@@ -309,7 +316,7 @@ public final class SchematicReader {
 
         BlockPos offset = new BlockPos(s.getIntOr("WEOffsetX", 0), s.getIntOr("WEOffsetY", 0), s.getIntOr("WEOffsetZ", 0));
         int entityCount = s.getListOrEmpty("Entities").size();
-        return new Schematic(name, width, height, length, offset, palette.toArray(new BlockState[0]), blocks, blockEntities, entityCount, unknown);
+        return new Schematic(name, width, height, length, offset, palette.toArray(new BlockState[0]), blocks, blockEntities, entityCount, unknown, true);
     }
 
     /**
@@ -327,6 +334,15 @@ public final class SchematicReader {
             int up = i + layer < states.length ? i + layer : -1;
             int down = i - layer;
             switch (oldIds[i]) {
+                case 18, 161 -> {
+                    // Old leaves have decayable/check_decay, which no longer exist. Leaves in a build should stay.
+                    CompoundTag leaves = new CompoundTag();
+                    leaves.putString("Name", nameOf(state));
+                    CompoundTag properties = new CompoundTag();
+                    properties.putString("persistent", "true");
+                    leaves.put("Properties", properties);
+                    states[i] = new Dynamic<>(NbtOps.INSTANCE, leaves);
+                }
                 case 2 -> {
                     if (nameOf(state).equals("minecraft:grass_block") && snowAt(states, up)) {
                         states[i] = ChunkPalettedStorageFix.MappingConstants.SNOWY_GRASS;
@@ -430,6 +446,34 @@ public final class SchematicReader {
                 default -> {}
             }
         }
+    }
+
+    /**
+     * For a state the parser refuses (a property that was renamed or dropped since): the upgraded block with only the
+     * properties it still has. Null if the block itself no longer exists.
+     */
+    private static @Nullable BlockState lenientState(HolderLookup<Block> blockLookup, DataFixer fixer, @Nullable Dynamic<?> state, int current) {
+        if (state == null) {
+            return null;
+        }
+        BlockState result;
+        try {
+            result = BlockStateParser.parseForBlock(blockLookup, upgradeState(fixer, nameOf(state), FLATTENING_DATA_VERSION, current), false).blockState();
+        } catch (CommandSyntaxException e) {
+            return null;
+        }
+        Map<String, String> properties = state.get("Properties").asMap(k -> k.asString(""), v -> v.asString(""));
+        for (Property<?> property : result.getProperties()) {
+            String value = properties.get(property.getName());
+            if (value != null) {
+                result = withValue(result, property, value);
+            }
+        }
+        return result;
+    }
+
+    private static <T extends Comparable<T>> BlockState withValue(BlockState state, Property<T> property, String value) {
+        return property.getValue(value).map(v -> state.setValue(property, v)).orElse(state);
     }
 
     private static boolean snowAt(Dynamic<?>[] states, int index) {

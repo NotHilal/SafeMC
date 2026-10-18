@@ -24,7 +24,9 @@ import net.minecraft.resources.RegistryOps;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
@@ -124,6 +126,71 @@ public final class WorldInventories {
         // Save the vanilla player file right away too, so a crash can't pair the old items with the new group.
         server.getPlayerList().getPlayerIo().save(player);
         LOGGER.info("[SafePlots] {} switched inventory {} -> {}", player.getGameProfile().name(), from, target);
+    }
+
+    /**
+     * Puts items into the inventory the player has in a group, also when they are in another world right now (then
+     * they find them on arrival). Only the 36 main slots are used. False, and nothing changes, if they don't fit.
+     */
+    public boolean give(ServerPlayer player, String group, ItemStack stack) {
+        State state = state(player);
+        if (state.current.equals(group)) {
+            if (!addToMain(player.getInventory(), stack.copy())) {
+                return false;
+            }
+            player.inventoryMenu.broadcastChanges();
+            return true;
+        }
+        RegistryOps<Tag> ops = ops();
+        CompoundTag before = state.stored.get(group);
+        SimpleContainer items = new SimpleContainer(player.getInventory().getContainerSize());
+        readItems(items, before == null ? new ListTag() : before.getListOrEmpty("inventory"), ops);
+        if (!addToMain(items, stack.copy())) {
+            return false;
+        }
+        CompoundTag after = before == null ? new CompoundTag() : before.copy(); // a first visit then starts with just these
+        after.put("inventory", writeItems(items, ops));
+        state.stored.put(group, after);
+        if (!save(player.getUUID(), state)) {
+            if (before == null) {
+                state.stored.remove(group);
+            } else {
+                state.stored.put(group, before);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /** Stacks onto matching items first, then empty slots, in the main 36 slots; only if all of it fits. */
+    private static boolean addToMain(Container container, ItemStack stack) {
+        int main = Math.min(Inventory.INVENTORY_SIZE, container.getContainerSize());
+        int room = 0;
+        for (int slot = 0; slot < main; slot++) {
+            ItemStack in = container.getItem(slot);
+            if (in.isEmpty()) {
+                room += stack.getMaxStackSize();
+            } else if (ItemStack.isSameItemSameComponents(in, stack)) {
+                room += Math.max(0, in.getMaxStackSize() - in.getCount());
+            }
+        }
+        if (room < stack.getCount()) {
+            return false;
+        }
+        for (int pass = 0; pass < 2 && !stack.isEmpty(); pass++) {
+            for (int slot = 0; slot < main && !stack.isEmpty(); slot++) {
+                ItemStack in = container.getItem(slot);
+                if (pass == 0 && !in.isEmpty() && ItemStack.isSameItemSameComponents(in, stack)) {
+                    int moved = Math.min(stack.getCount(), in.getMaxStackSize() - in.getCount());
+                    in.grow(moved);
+                    stack.shrink(moved);
+                } else if (pass == 1 && in.isEmpty()) {
+                    container.setItem(slot, stack.split(stack.getMaxStackSize()));
+                }
+            }
+        }
+        container.setChanged();
+        return true;
     }
 
     // ---------------------------------------------------------------- events

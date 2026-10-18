@@ -83,11 +83,15 @@ public final class ClaimSigns {
             return;
         }
 
-        int owned = manager.plotsOwnedBy(id).size();
-        int max = manager.maxClaims(id);
+        int owned = manager.plotsOwnedBy(id, plot.dimension()).size();
+        int max = manager.maxClaims(id, plot.dimension());
+        if (manager.worldClaims(plot.dimension()) == 0) {
+            player.sendSystemMessage(Component.literal("Plots can't be claimed in this world.").withStyle(ChatFormatting.RED));
+            return;
+        }
         if (owned >= max) {
             player.sendSystemMessage(Component.literal("You already own " + owned + "/" + max
-                    + " plots. Ask an admin for another claim slot.").withStyle(ChatFormatting.RED));
+                    + " plots in this world. Ask an admin for another claim slot.").withStyle(ChatFormatting.RED));
             return;
         }
 

@@ -13,6 +13,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -20,7 +21,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Rotation;
 
 /**
- * /schem list|load|info|rotate|paste|undo. Admins only. Put {@code .schem} files (from WorldEdit, Axiom,
+ * /schem list|load|copy|save|info|rotate|paste|undo. Admins only. Put {@code .schem} files (from WorldEdit, Axiom,
  * schematic websites, ...) or old MCEdit {@code .schematic} files in {@code <server>/schematics/}, load one,
  * then paste it where you stand.
  */
@@ -38,6 +39,11 @@ public final class SchemCommand {
                                 .suggests((ctx, b) -> SharedSuggestionProvider.suggest(
                                         schematics().available().stream().map(SchemCommand::quoteIfNeeded), b))
                                 .executes(SchemCommand::load)))
+                .then(Commands.literal("copy")
+                        .then(Commands.argument("from", BlockPosArgument.blockPos())
+                                .then(Commands.argument("to", BlockPosArgument.blockPos()).executes(SchemCommand::copy))))
+                .then(Commands.literal("save")
+                        .then(Commands.argument("name", StringArgumentType.string()).executes(SchemCommand::save)))
                 .then(Commands.literal("info").executes(SchemCommand::info))
                 .then(Commands.literal("rotate")
                         .then(Commands.argument("degrees", IntegerArgumentType.integer(-270, 270))
@@ -99,6 +105,70 @@ public final class SchemCommand {
             manager.setClipboard(player.getUUID(), schematic);
             src.sendSuccess(() -> Component.literal("✓ Loaded " + name + " (" + schematic.size() + ")." + warnings(schematic)
                     + " Stand where it should go and run /schem paste.").withStyle(ChatFormatting.GREEN), false);
+        }));
+        return 1;
+    }
+
+    private static int copy(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        Schematics manager = schematics();
+        if (manager.busy(player.getUUID())) {
+            return fail(c, "Your last copy, paste or undo is still running. Wait for it to finish.");
+        }
+        BlockPos from = BlockPosArgument.getBlockPos(c, "from");
+        BlockPos to = BlockPosArgument.getBlockPos(c, "to");
+        BlockPos min = BlockPos.min(from, to);
+        BlockPos max = BlockPos.max(from, to);
+        long volume = (long) (max.getX() - min.getX() + 1) * (max.getY() - min.getY() + 1) * (max.getZ() - min.getZ() + 1);
+        if (volume > Schematics.MAX_VOLUME) {
+            return fail(c, "That box is " + volume + " blocks; the most you can copy at once is " + Schematics.MAX_VOLUME + ".");
+        }
+        CommandSourceStack src = c.getSource();
+        String size = (max.getX() - min.getX() + 1) + " x " + (max.getY() - min.getY() + 1) + " x " + (max.getZ() - min.getZ() + 1);
+        src.sendSuccess(() -> Component.literal("Copying " + size + " (" + volume + " blocks)"
+                + (volume > 200_000 ? ". Big copies take a few seconds." : "...")).withStyle(ChatFormatting.YELLOW), false);
+        manager.copy(player, min, max, schematic -> {
+            manager.setClipboard(player.getUUID(), schematic);
+            src.sendSuccess(() -> Component.literal("\u2713 Copied " + schematic.size() + " with " + schematic.blockEntities().size()
+                    + " chests/signs/etc. /schem paste puts it at the same spot relative to you as now, wherever you stand"
+                    + " (any world). /schem save <name> keeps it as a file.").withStyle(ChatFormatting.GREEN), false);
+        });
+        return 1;
+    }
+
+    private static int save(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer player = c.getSource().getPlayerOrException();
+        Schematics manager = schematics();
+        Schematics.Clipboard clip = manager.clipboard(player.getUUID());
+        if (clip == null) {
+            return fail(c, "Nothing to save. Copy something first with /schem copy <from> <to>.");
+        }
+        String name = StringArgumentType.getString(c, "name");
+        if (!name.matches("[A-Za-z0-9_.+-]+") || name.startsWith(".")) {
+            return fail(c, "Use a simple name: letters, numbers, - and _ (no spaces or slashes).");
+        }
+        if (manager.resolve(name) != null) {
+            return fail(c, "There already is a schematic \"" + name + "\". Pick another name, or delete the file in " + manager.dir() + ".");
+        }
+        Schematic schematic = clip.schematic();
+        Path file = manager.dir().resolve(name + ".schem");
+        CommandSourceStack src = c.getSource();
+        MinecraftServer server = src.getServer();
+        CompletableFuture.runAsync(() -> {
+            try {
+                SchematicWriter.write(schematic, file);
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
+        }).whenComplete((ignored, error) -> server.execute(() -> {
+            if (error != null) {
+                LogUtils.getLogger().error("[SafePlots] Could not save schematic {}", file, error);
+                src.sendFailure(Component.literal("Could not save " + name + ": " + error.getCause()));
+                return;
+            }
+            src.sendSuccess(() -> Component.literal("\u2713 Saved as " + name + ".schem (" + schematic.size() + ")"
+                    + (clip.rotation() == Rotation.NONE ? "" : ", unrotated") + ". Load it any time with /schem load " + name + ".")
+                    .withStyle(ChatFormatting.GREEN), false);
         }));
         return 1;
     }

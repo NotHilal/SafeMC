@@ -189,9 +189,39 @@ public final class PlotManager {
         return result;
     }
 
+    /** The player's plots in one world (limits count per world). */
+    public List<Plot> plotsOwnedBy(UUID player, String dimension) {
+        List<Plot> result = new ArrayList<>();
+        for (Plot plot : plotsOwnedBy(player)) {
+            if (plot.dimension().equals(dimension)) {
+                result.add(plot);
+            }
+        }
+        return result;
+    }
+
+    /** The player's own limit (/plot setlimit). Limits count per world: see {@link #maxClaims(UUID, String)}. */
     public int maxClaims(UUID player) {
         PlayerData data = players.get(player);
         return data == null ? PlayerData.DEFAULT_MAX_CLAIMS : data.maxClaims;
+    }
+
+    /**
+     * How many plots the player may own in one world: their own limit, or the world's (/mv claims) if that is
+     * higher. A world set to 0, or a player whose own limit is 0, allows none.
+     */
+    public int maxClaims(UUID player, String dimension) {
+        int own = maxClaims(player);
+        int world = worldClaims(dimension);
+        return own == 0 || world == 0 ? 0 : Math.max(own, world);
+    }
+
+    /** The world's /mv claims number (1 unless set). It is also how many plots /plot claimhere may make there. */
+    public int worldClaims(String dimension) {
+        Worlds worlds = Worlds.get();
+        ServerLevel level = level(dimension);
+        Integer limit = worlds == null || level == null ? null : worlds.claimLimit(level);
+        return limit == null ? PlayerData.DEFAULT_MAX_CLAIMS : limit;
     }
 
     /** Best known current name for a UUID. Works for offline players who have joined before. */

@@ -146,10 +146,24 @@ public final class Worlds {
     private final Set<String> pendingDeletes = new TreeSet<>();
     /** The /mvtp name of the hub: where /hub goes and new players start. */
     private String hub = "world";
+    /** False after {@code /mv endportal off}: eyes of ender can't go in portal frames and end portals don't work. */
+    private boolean endPortal = true;
     /** /mvtp names of the worlds where TNT explodes ({@code /mv tnt <world> on}). Everywhere else it doesn't. */
     private final Set<String> tntWorlds = new TreeSet<>();
+    /** /mvtp names of the worlds where end crystals explode ({@code /mv crystals <world> on}). Everywhere else they don't. */
+    private final Set<String> crystalWorlds = new TreeSet<>();
+    /** /mvtp name -> coal block elevators on or off ({@code /mv elevators}); missing means off. */
+    private final Map<String, Boolean> elevatorWorlds = new TreeMap<>();
     /** Names of our worlds that stay at noon without weather ({@code /mv alwaysday <world> on}). */
     private final Set<String> alwaysDay = new TreeSet<>();
+    /** Names of our worlds where hunger stays full ({@code /mv hunger <world> off}). */
+    private final Set<String> noHunger = new TreeSet<>();
+    /** Names of our worlds where nobody takes damage ({@code /mv damage <world> off}). */
+    private final Set<String> noDamage = new TreeSet<>();
+    /** Names of our worlds with the top-winners sidebar ({@code /mv topwinners <world> on}). */
+    private final Set<String> topWinners = new TreeSet<>();
+    /** /mvtp name -> how many plots each player may have there ({@code /mv claims}); missing means 1, 0 means none. */
+    private final Map<String, Integer> claimLimits = new TreeMap<>();
     private final Map<ResourceKey<Level>, Spawn> vanillaSpawns = new HashMap<>();
 
     private Worlds(MinecraftServer server, Path file) {
@@ -216,6 +230,15 @@ public final class Worlds {
     public static boolean protectedHub(Level level) {
         Worlds worlds = instance;
         return worlds != null && worlds.isProtectedHub(level);
+    }
+
+    public boolean endPortal() {
+        return endPortal;
+    }
+
+    public void setEndPortal(boolean on) {
+        endPortal = on;
+        save();
     }
 
     public void setHub(String name) {
@@ -329,7 +352,13 @@ public final class Worlds {
         }
         worlds.remove(world.name());
         tntWorlds.remove(world.name());
+        crystalWorlds.remove(world.name());
+        elevatorWorlds.remove(world.name());
         alwaysDay.remove(world.name());
+        noHunger.remove(world.name());
+        topWinners.remove(world.name());
+        noDamage.remove(world.name());
+        claimLimits.remove(world.name());
         if (hub.equals(world.name())) {
             hub = "world";
         }
@@ -381,11 +410,123 @@ public final class Worlds {
         return world != null && alwaysDay.contains(world.name());
     }
 
+    /** False if hunger is turned off there: food stays full. */
+    public boolean hunger(String name) {
+        return !noHunger.contains(name);
+    }
+
+    public boolean hunger(Level level) {
+        World world = worldOf(level);
+        return world == null || !noHunger.contains(world.name());
+    }
+
+    /** False if damage is turned off there: nobody gets hurt (like in the hub). */
+    public boolean damage(String name) {
+        return !noDamage.contains(name);
+    }
+
+    public boolean damage(Level level) {
+        World world = worldOf(level);
+        return world == null || !noDamage.contains(world.name());
+    }
+
+    public void setDamage(String name, boolean on) {
+        if (on) {
+            noDamage.remove(name);
+        } else {
+            noDamage.add(name);
+        }
+        save();
+    }
+
+    /** True if players there see the top winner of each minigame on the side of their screen. */
+    public boolean topWinners(String name) {
+        return topWinners.contains(name);
+    }
+
+    public boolean topWinners(Level level) {
+        World world = worldOf(level);
+        return world != null && topWinners.contains(world.name());
+    }
+
+    public void setTopWinners(String name, boolean on) {
+        if (on) {
+            topWinners.add(name);
+        } else {
+            topWinners.remove(name);
+        }
+        save();
+    }
+
+    public void setHunger(String name, boolean on) {
+        if (on) {
+            noHunger.remove(name);
+        } else {
+            noHunger.add(name);
+        }
+        save();
+    }
+
+    /** The /mv claims number of a world ({@code world}, {@code nether}, {@code end} or ours), or null if not set. */
+    public @Nullable Integer claimLimit(String name) {
+        return claimLimits.get(name);
+    }
+
+    public @Nullable Integer claimLimit(Level level) {
+        String name = nameOf(level);
+        return name == null ? null : claimLimits.get(name);
+    }
+
+    /** {@code limit == null} goes back to the default (1). */
+    public void setClaimLimit(String name, @Nullable Integer limit) {
+        if (limit == null) {
+            claimLimits.remove(name);
+        } else {
+            claimLimits.put(name, limit);
+        }
+        save();
+    }
+
     public void setAlwaysDay(String name, boolean on) {
         if (on) {
             alwaysDay.add(name);
         } else {
             alwaysDay.remove(name);
+        }
+        save();
+    }
+
+    /** {@code name} is a /mvtp name: {@code world}, {@code nether}, {@code end} or one of ours. */
+    public boolean crystals(String name) {
+        return crystalWorlds.contains(name);
+    }
+
+    /** Whether end crystals explode in this level. Off unless turned on for the world, also in other mods' dimensions. */
+    public boolean crystals(Level level) {
+        String name = nameOf(level);
+        return name != null && crystals(name);
+    }
+
+    /** Whether coal blocks are elevators in the world with this /mvtp name. */
+    public boolean elevators(String name) {
+        return elevatorWorlds.getOrDefault(name, false);
+    }
+
+    public boolean elevators(Level level) {
+        String name = nameOf(level);
+        return name != null && elevators(name);
+    }
+
+    public void setElevators(String name, boolean on) {
+        elevatorWorlds.put(name, on);
+        save();
+    }
+
+    public void setCrystals(String name, boolean on) {
+        if (on) {
+            crystalWorlds.add(name);
+        } else {
+            crystalWorlds.remove(name);
         }
         save();
     }
@@ -571,14 +712,35 @@ public final class Worlds {
         if (root.has("pendingDeletes")) {
             root.getAsJsonArray("pendingDeletes").forEach(el -> pendingDeletes.add(el.getAsString()));
         }
+        if (root.has("endPortal")) {
+            endPortal = root.get("endPortal").getAsBoolean();
+        }
         if (root.has("hub")) {
             hub = root.get("hub").getAsString();
         }
         if (root.has("tnt")) {
             root.getAsJsonArray("tnt").forEach(el -> tntWorlds.add(el.getAsString()));
         }
+        if (root.has("crystals")) {
+            root.getAsJsonArray("crystals").forEach(el -> crystalWorlds.add(el.getAsString()));
+        }
+        if (root.has("elevators")) {
+            root.getAsJsonObject("elevators").entrySet().forEach(e -> elevatorWorlds.put(e.getKey(), e.getValue().getAsBoolean()));
+        }
         if (root.has("alwaysDay")) {
             root.getAsJsonArray("alwaysDay").forEach(el -> alwaysDay.add(el.getAsString()));
+        }
+        if (root.has("noHunger")) {
+            root.getAsJsonArray("noHunger").forEach(el -> noHunger.add(el.getAsString()));
+        }
+        if (root.has("noDamage")) {
+            root.getAsJsonArray("noDamage").forEach(el -> noDamage.add(el.getAsString()));
+        }
+        if (root.has("topWinners")) {
+            root.getAsJsonArray("topWinners").forEach(el -> topWinners.add(el.getAsString()));
+        }
+        if (root.has("claims")) {
+            root.getAsJsonObject("claims").entrySet().forEach(e -> claimLimits.put(e.getKey(), e.getValue().getAsInt()));
         }
     }
 
@@ -613,14 +775,35 @@ public final class Worlds {
         if (!pendingDeletes.isEmpty()) {
             root.add("pendingDeletes", GSON.toJsonTree(pendingDeletes));
         }
+        if (!endPortal) {
+            root.addProperty("endPortal", false);
+        }
         if (!hub.equals("world")) {
             root.addProperty("hub", hub);
         }
         if (!tntWorlds.isEmpty()) {
             root.add("tnt", GSON.toJsonTree(tntWorlds));
         }
+        if (!crystalWorlds.isEmpty()) {
+            root.add("crystals", GSON.toJsonTree(crystalWorlds));
+        }
+        if (!elevatorWorlds.isEmpty()) {
+            root.add("elevators", GSON.toJsonTree(elevatorWorlds));
+        }
         if (!alwaysDay.isEmpty()) {
             root.add("alwaysDay", GSON.toJsonTree(alwaysDay));
+        }
+        if (!noHunger.isEmpty()) {
+            root.add("noHunger", GSON.toJsonTree(noHunger));
+        }
+        if (!noDamage.isEmpty()) {
+            root.add("noDamage", GSON.toJsonTree(noDamage));
+        }
+        if (!topWinners.isEmpty()) {
+            root.add("topWinners", GSON.toJsonTree(topWinners));
+        }
+        if (!claimLimits.isEmpty()) {
+            root.add("claims", GSON.toJsonTree(claimLimits));
         }
         try {
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");

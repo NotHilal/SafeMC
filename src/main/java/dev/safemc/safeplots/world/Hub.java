@@ -1,5 +1,6 @@
 package dev.safemc.safeplots.world;
 
+import dev.safemc.safeplots.parkour.Parkours;
 import dev.safemc.safeplots.teleport.Teleports;
 import java.util.Set;
 import net.minecraft.server.level.ServerLevel;
@@ -16,7 +17,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 /**
  * Players joining for the first time start at the spawn of the hub world ({@code /mv sethub}). In the hub nobody
- * takes damage (falling into the void takes you back to its spawn; /kill still works) or gets hungry.
+ * takes damage (falling into the void takes you back to its spawn; /kill still works) or gets hungry. Worlds with
+ * {@code /mv damage <world> off} are safe from damage the same way.
  */
 public final class Hub {
     private Hub() {}
@@ -36,16 +38,28 @@ public final class Hub {
 
     @SubscribeEvent(priority = EventPriority.HIGH)
     public static void onDamage(LivingIncomingDamageEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player) || !Worlds.protectedHub(player.level())) {
+        Worlds worlds = Worlds.get();
+        if (!(event.getEntity() instanceof ServerPlayer player) || worlds == null) {
             return;
+        }
+        boolean hub = Worlds.protectedHub(player.level());
+        if (!hub && worlds.damage(player.level())) {
+            return; // /mv damage <world> off works like the hub
         }
         DamageSource source = event.getSource();
         if (source.is(DamageTypes.GENERIC_KILL)) {
             return; // /kill
         }
         event.setCanceled(true);
-        if (source.is(DamageTypes.FELL_OUT_OF_WORLD) && Worlds.get() != null) {
-            toSpawn(Worlds.get(), player);
+        if (source.is(DamageTypes.FELL_OUT_OF_WORLD)) {
+            Parkours parkours = Parkours.get();
+            if (parkours == null || !parkours.backToCheckpoint(player)) { // during a parkour: back to the last checkpoint
+                String name = hub ? worlds.hub() : worlds.nameOf(player.level());
+                Teleports.Destination dest = name == null ? null : worlds.spawnDestination(name);
+                if (dest != null) {
+                    player.teleportTo(dest.level(), dest.pos().x, dest.pos().y, dest.pos().z, Set.of(), dest.yRot(), dest.xRot(), true);
+                }
+            }
             player.resetFallDistance();
         }
     }

@@ -49,6 +49,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.DispenserBlock;
 import net.minecraft.world.level.block.piston.PistonBaseBlock;
 import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
@@ -67,15 +68,31 @@ import net.neoforged.neoforge.event.ServerChatEvent;
 public final class SelfTest {
     private static final int Y = -60; // first air layer in a default superflat world
     private static final List<String> results = new ArrayList<>();
+    /** Set when a chat message got past mutes (WorldChat, at LOWEST, then always cancels it to send its own line). */
+    private static boolean chatPassed;
 
     public SelfTest() {
+        NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOW, (ServerChatEvent e) -> chatPassed = true);
         NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent e) -> e.getDispatcher().register(Commands.literal("selftest")
                 .then(Commands.literal("setup").executes(c -> report(c, SelfTest::setup)))
                 .then(Commands.literal("check").executes(c -> report(c, SelfTest::check)))
                 .then(Commands.literal("persist").executes(c -> report(c, SelfTest::persist)))
                 .then(Commands.literal("worlds").executes(c -> report(c, SelfTest::worlds)))
                 .then(Commands.literal("schem").executes(c -> report(c, SelfTest::schem)))
-                .then(Commands.literal("schembig").executes(c -> report(c, SelfTest::schemBig)))));
+                .then(Commands.literal("schembig").executes(c -> report(c, SelfTest::schemBig)))
+                .then(Commands.literal("chat").executes(c -> report(c, SelfTest::chat)))
+                .then(Commands.literal("crystals").executes(c -> report(c, SelfTest::crystals)))
+                .then(Commands.literal("holo").executes(c -> report(c, SelfTest::holo)))
+                .then(Commands.literal("guide").executes(c -> report(c, SelfTest::guide)))
+                .then(Commands.literal("parkour").executes(c -> report(c, SelfTest::parkour)))
+                .then(Commands.literal("elevator").executes(c -> report(c, SelfTest::elevator)))
+                .then(Commands.literal("hunger").executes(c -> report(c, SelfTest::hunger)))
+                .then(Commands.literal("hubboard").executes(c -> report(c, SelfTest::hubBoard)))
+                .then(Commands.literal("endportal").executes(c -> report(c, SelfTest::endPortal)))
+                .then(Commands.literal("damage").executes(c -> report(c, SelfTest::damage)))
+                .then(Commands.literal("afk").executes(c -> report(c, SelfTest::afk)))
+                .then(Commands.literal("invsee").executes(c -> report(c, SelfTest::invsee)))
+                .then(Commands.literal("rewards").executes(c -> report(c, SelfTest::rewards)))));
     }
 
     private interface Body {
@@ -467,6 +484,7 @@ public final class SelfTest {
                 && settled.getFirst().min().equals(new BlockPos(2975, level.getMinY(), 2975))
                 && settled.getFirst().max().equals(new BlockPos(3024, level.getMaxY(), 3024)),
                 "/plot confirm makes a 50x50 full-height plot around the player");
+        expect(dev.safemc.safeplots.plot.PlotBorders.showing(settler.getUUID()) == null, "the glowing border goes away after /plot confirm");
         expect(!pm.canModify(neighbor, level, new BlockPos(3010, Y, 3010)), "others can't build in a self-made plot");
         settler.teleportTo(3500.5, Y, 3500.5);
         pm.setMaxClaims(settler.getUUID(), 3);
@@ -490,15 +508,39 @@ public final class SelfTest {
         pm.setMaxClaims(neighbor.getUUID(), 1);
         expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "self-made plots count toward the plot limit");
         BlockPos spawn = server.getRespawnData().pos();
-        neighbor.teleportTo(spawn.getX() + 120.5, Y, spawn.getZ() + 0.5); // square reaches to 95 blocks from spawn
+        neighbor.teleportTo(spawn.getX() + 34.5, Y, spawn.getZ() + 0.5); // square reaches to 9 blocks from spawn
         run(neighbor, "plot claimhere");
         run(neighbor, "plot confirm");
-        expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "no self-made plots within 100 blocks of spawn");
+        expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "no self-made plots within 10 blocks of spawn");
         String settledName = settled.getFirst().name();
         settler.teleportTo(3000.5, Y, 3000.5);
         run(settler, "plot abandon");
         expect(pm.plot(settledName) == null && pm.plotsOwnedBy(settler.getUUID()).isEmpty(),
                 "abandoning a self-made plot deletes it");
+
+        // /mv claims: 3 plots per player in this world, then 0 (no claiming), then back to the default 1.
+        console(server, "mv claims world 3");
+        for (int i = 0; i < 4; i++) {
+            settler.teleportTo(3000.5 + 200 * i, Y, 3000.5);
+            run(settler, "plot claimhere");
+            run(settler, "plot confirm");
+        }
+        List<Plot> three = pm.plotsOwnedBy(settler.getUUID());
+        expect(three.size() == 3 && three.stream().allMatch(Plot::selfClaimed), "/mv claims world 3: three self-made plots, not a fourth: " + three.size());
+        String listed = output(settler, "plot list");
+        expect(listed.contains("(3/3)") && three.stream().allMatch(pl -> listed.contains(pl.name() + ": center")),
+                "/plot list shows your plots here with coordinates");
+        console(server, "mv claims world 0");
+        neighbor.teleportTo(3000.5, Y, 4000.5);
+        run(neighbor, "plot claimhere");
+        run(neighbor, "plot confirm");
+        expect(pm.plotsOwnedBy(neighbor.getUUID()).isEmpty(), "/mv claims world 0: nobody can claim there");
+        console(server, "mv claims world 1");
+        for (Plot plot : three) {
+            run(settler, "plot abandon " + plot.name());
+        }
+        expect(pm.plotsOwnedBy(settler.getUUID()).isEmpty() && pm.worldClaims(PlotManager.dimensionId(level)) == 1,
+                "back to one plot per world");
 
         // ---- admin bypass
         BlockPos stone2 = p(1007, 1001);
@@ -1029,8 +1071,37 @@ public final class SelfTest {
         var path = dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("old/st_path"), "st_path", server.registryAccess(), 1000);
         expect(path.palette()[0].is(Blocks.DIRT_PATH), "1.16 grass_path upgraded to dirt_path");
 
+        // Old leaves (decayable/check_decay) and glass panes, which old files store unconnected.
+        CompoundTag panes = new CompoundTag();
+        panes.putShort("Width", (short) 5);
+        panes.putShort("Height", (short) 1);
+        panes.putShort("Length", (short) 1);
+        panes.putString("Materials", "Alpha");
+        panes.putByteArray("Blocks", new byte[] {18, (byte) 160, (byte) 160, 0, (byte) 160});
+        panes.putByteArray("Data", new byte[] {8, 14, 14, 0, 1});
+        net.minecraft.nbt.NbtIo.writeCompressed(panes, dir.resolve("st_panes.schematic"));
+        var paneSchem = dev.safemc.safeplots.schematic.SchematicReader.read(manager.resolve("st_panes"), "st_panes", server.registryAccess(), 1000);
+        BlockState oldLeaves = paneSchem.palette()[paneSchem.blocks()[0]];
+        expect(paneSchem.unknownBlocks() == 0 && oldLeaves.is(Blocks.OAK_LEAVES)
+                && oldLeaves.getValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT), "old leaves read as leaves that don't decay: " + oldLeaves);
+
         ServerPlayer builder = fakePlayer(server, "Builder");
         BlockPos at = new BlockPos(3000, Y, 3000);
+        BlockPos paneAt = at.offset(0, 5, 20);
+        manager.setClipboard(builder.getUUID(), paneSchem);
+        manager.paste(builder, manager.clipboard(builder.getUUID()), paneAt, false, n -> {});
+        manager.finishAll();
+        BlockState pane1 = level.getBlockState(paneAt.offset(1, 0, 0));
+        BlockState pane2 = level.getBlockState(paneAt.offset(2, 0, 0));
+        expect(pane1.getBlock() instanceof net.minecraft.world.level.block.StainedGlassPaneBlock && pane1.getValue(net.minecraft.world.level.block.CrossCollisionBlock.EAST)
+                && pane2.getValue(net.minecraft.world.level.block.CrossCollisionBlock.WEST), "old glass panes join after pasting: " + pane1);
+        BlockState lonePane = level.getBlockState(paneAt.offset(4, 0, 0));
+        expect(lonePane.getValue(net.minecraft.world.level.block.CrossCollisionBlock.NORTH)
+                && lonePane.getValue(net.minecraft.world.level.block.CrossCollisionBlock.WEST)
+                && !pane1.getValue(net.minecraft.world.level.block.CrossCollisionBlock.NORTH), "a pane touching nothing becomes a + cross like before 1.9");
+        manager.undo(builder.getUUID(), n -> {});
+        manager.finishAll();
+        expect(level.getBlockState(paneAt.offset(1, 0, 0)).isAir(), "undo removes the joined panes");
         builder.teleportTo(level, at.getX() + 0.5, at.getY(), at.getZ() + 0.5, java.util.Set.of(), 0, 0, true);
         for (int dx = -2; dx <= 4; dx++) {
             for (int dz = -1; dz <= 3; dz++) {
@@ -1072,6 +1143,49 @@ public final class SelfTest {
         manager.finishAll();
         expect(level.getBlockState(at.offset(0, 0, 1)).is(Blocks.GLASS), "second undo works too");
 
+        // /schem copy + save: a stone base with a chest and stairs, copied, written, read back and pasted elsewhere.
+        BlockPos src = at.offset(0, 0, 40);
+        for (BlockPos q : BlockPos.betweenClosed(src, src.offset(2, 1, 2))) {
+            level.setBlockAndUpdate(q, Blocks.AIR.defaultBlockState());
+        }
+        for (BlockPos q : BlockPos.betweenClosed(src, src.offset(2, 0, 2))) {
+            level.setBlockAndUpdate(q, Blocks.STONE.defaultBlockState());
+        }
+        level.setBlockAndUpdate(src.offset(1, 1, 1), Blocks.CHEST.defaultBlockState());
+        ((net.minecraft.world.level.block.entity.ChestBlockEntity) level.getBlockEntity(src.offset(1, 1, 1))).setItem(0, new ItemStack(Items.EMERALD, 7));
+        level.setBlockAndUpdate(src.offset(2, 1, 0), Blocks.OAK_STAIRS.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.StairBlock.FACING, Direction.SOUTH));
+        server.getPlayerList().op(builder.nameAndId());
+        builder.teleportTo(level, src.getX() - 0.5, src.getY(), src.getZ() + 0.5, java.util.Set.of(), 0, 0, true); // one block west of the corner
+        run(builder, "schem copy " + src.getX() + " " + src.getY() + " " + src.getZ() + " "
+                + (src.getX() + 2) + " " + (src.getY() + 1) + " " + (src.getZ() + 2));
+        manager.finishAll();
+        var copied = manager.clipboard(builder.getUUID());
+        expect(copied != null && copied.schematic().size().equals("3 x 2 x 3") && copied.schematic().blockEntities().size() == 1
+                && copied.schematic().offset().equals(new BlockPos(1, 0, 0)), "/schem copy: 3 x 2 x 3 with the chest, offset from where you stood");
+        java.nio.file.Path saved = dir.resolve("st_copy.schem");
+        java.nio.file.Files.deleteIfExists(saved);
+        dev.safemc.safeplots.schematic.SchematicWriter.write(copied.schematic(), saved);
+        var reread = dev.safemc.safeplots.schematic.SchematicReader.read(saved, "st_copy", server.registryAccess(), 1000);
+        expect(reread.size().equals("3 x 2 x 3") && reread.offset().equals(new BlockPos(1, 0, 0)) && reread.unknownBlocks() == 0,
+                "saved .schem reads back the same: " + reread.size() + " offset " + reread.offset());
+        manager.setClipboard(builder.getUUID(), reread);
+        BlockPos dest = at.offset(20, 0, 40);
+        builder.teleportTo(level, dest.getX() + 0.5, dest.getY(), dest.getZ() + 0.5, java.util.Set.of(), 0, 0, true);
+        manager.paste(builder, manager.clipboard(builder.getUUID()), dest, false, n -> {});
+        manager.finishAll();
+        BlockPos corner = dest.offset(1, 0, 0);
+        expect(level.getBlockState(corner).is(Blocks.STONE) && level.getBlockState(corner.offset(2, 0, 2)).is(Blocks.STONE),
+                "the copy pastes at the same spot relative to you");
+        expect(level.getBlockEntity(corner.offset(1, 1, 1)) instanceof net.minecraft.world.level.block.entity.ChestBlockEntity copiedChest
+                && copiedChest.getItem(0).is(Items.EMERALD) && copiedChest.getItem(0).getCount() == 7, "the chest and its 7 emeralds came along");
+        expect(level.getBlockState(corner.offset(2, 1, 0)).is(Blocks.OAK_STAIRS)
+                && level.getBlockState(corner.offset(2, 1, 0)).getValue(net.minecraft.world.level.block.StairBlock.FACING) == Direction.SOUTH,
+                "stairs keep their direction");
+        manager.undo(builder.getUUID(), n -> {});
+        manager.finishAll();
+        java.nio.file.Files.deleteIfExists(saved);
+
         manager.setClipboard(builder.getUUID(), path);
         manager.paste(builder, manager.clipboard(builder.getUUID()), at, false, n -> {});
         manager.finishAll();
@@ -1110,6 +1224,701 @@ public final class SelfTest {
     }
 
     /** Times a 296 x 131 x 304 paste (11.8M blocks, mostly air above a solid base) and its undo. Slow; run by hand. */
+    /** Chat lines get the world in front: the server log shows "[world] <Chatter> hello there". */
+    private static void chat(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        ServerPlayer chatter = fakePlayer(server, "Chatter");
+        var event = new net.neoforged.neoforge.event.ServerChatEvent(chatter, "hello there", Component.literal("hello there"));
+        NeoForge.EVENT_BUS.post(event);
+        expect(event.isCanceled(), "chat is sent as our own line with the world tag (see the log)");
+    }
+
+    /** End crystals: off by default (they just break), /mv crystals world on makes them explode. */
+    private static int countChests(ServerPlayer p) {
+        int n = 0;
+        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
+            if (dev.safemc.safeplots.reward.Rewards.isChest(p.getInventory().getItem(i))) {
+                n += p.getInventory().getItem(i).getCount();
+            }
+        }
+        return n;
+    }
+
+    private static int countPrizes(ServerPlayer p) {
+        int n = 0;
+        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
+            ItemStack stack = p.getInventory().getItem(i);
+            if (!stack.isEmpty() && !dev.safemc.safeplots.reward.Rewards.isChest(stack)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static void rewards(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        var inventories = dev.safemc.safeplots.inventory.WorldInventories.get();
+        var rewards = dev.safemc.safeplots.reward.Rewards.get();
+        if (worlds.world("st_rew") == null) {
+            console(server, "mv create st_rew void");
+        }
+        ServerLevel rew = worlds.level(worlds.world("st_rew"));
+        java.nio.file.Path cfg = net.neoforged.fml.loading.FMLPaths.CONFIGDIR.get().resolve("safeplots-rewards.txt");
+        rewards.reload();
+        String original;
+        try {
+            original = java.nio.file.Files.readString(cfg);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            java.nio.file.Files.writeString(cfg, original.replaceFirst("(?m)^world:.*$", "world: st_rew").replaceFirst("(?m)^daily:.*$", "daily: 2"));
+            expect(rewards.reload() == null && rewards.level() == rew, "the reward world is set in the config file");
+            expect(rewards.prizes().size() == 12 && rewards.totalWeight() == 100, "the wheel: 12 prizes, chances add up to 100");
+            expect(rewards.prizes().getLast().rarest() && rewards.prizes().getLast().weight() == 1, "Papatya's book: 1%");
+            ItemStack rare = dev.safemc.safeplots.reward.Rewards.rarestBook("Alice");
+            var content = rare.get(net.minecraft.core.component.DataComponents.WRITTEN_BOOK_CONTENT);
+            expect(content != null && content.author().equals("Papatya") && content.pages().getFirst().raw().getString().contains("Congratulations Alice")
+                    && content.pages().getFirst().raw().getString().contains("Come find me"), "the rarest book is signed by Papatya, with the winner's name");
+            expect(rewards.prizes().stream().anyMatch(z -> z.describe().contains("Mending") && z.describe().contains("Fortune III")),
+                    "the enchanted book can be Efficiency IV, Fortune III, Protection IV or Mending");
+            ServerPlayer p = fakePlayer(server, "Winner");
+            p.teleportTo(rew, 0.5, 80, 0.5, java.util.Set.of(), 0, 0, true);
+            inventories.sync(p);
+            p.getInventory().clearContent();
+            p.teleportTo(level, 0.5, 100, 0.5, java.util.Set.of(), 0, 0, true);
+            inventories.sync(p);
+            p.getInventory().clearContent();
+            rewards.forget(p.getUUID());
+
+            console(server, "rewards win Winner");
+            console(server, "rewards win Winner");
+            console(server, "rewards win Winner");
+            expect(rewards.today(p.getUUID()) == 2 && countChests(p) == 0, "3 wins: 2 chests (the daily limit), none in this world's inventory");
+            p.getInventory().setItem(0, dev.safemc.safeplots.reward.Rewards.chest(1));
+            rewards.open(p, p.getInventory().getItem(0));
+            expect(!rewards.spinning(p.getUUID()) && countChests(p) == 1, "outside the reward world it doesn't open");
+            p.getInventory().clearContent();
+
+            p.teleportTo(rew, 0.5, 80, 0.5, java.util.Set.of(), 0, 0, true);
+            inventories.sync(p);
+            expect(countChests(p) == 2, "both chests are in the reward world inventory");
+            int slot = -1;
+            for (int i = 0; i < 36; i++) {
+                if (dev.safemc.safeplots.reward.Rewards.isChest(p.getInventory().getItem(i))) {
+                    slot = i;
+                }
+            }
+            rewards.open(p, p.getInventory().getItem(slot));
+            expect(rewards.spinning(p.getUUID()) && countChests(p) == 1 && p.containerMenu != p.inventoryMenu, "right-click: the wheel opens, one chest used");
+            java.util.Set<net.minecraft.world.item.Item> shown = new java.util.HashSet<>();
+            for (int i = 9; i < 18; i++) {
+                shown.add(p.containerMenu.getSlot(i).getItem().getItem());
+            }
+            expect(shown.size() == 9, "the wheel shows each prize once, no repeats: " + shown.size() + " different of 9");
+            for (int i = 0; i < 40 && rewards.spinning(p.getUUID()); i++) {
+                rewards.tickSpins();
+            }
+            expect(rewards.spinning(p.getUUID()), "still spinning after 2 seconds");
+            for (int i = 0; i < 200 && rewards.spinning(p.getUUID()); i++) {
+                rewards.tickSpins();
+            }
+            expect(!rewards.spinning(p.getUUID()) && countPrizes(p) == 1, "the wheel stops and the prize is in the inventory");
+            p.closeContainer();
+            rewards.open(p, p.getInventory().getItem(slot));
+            p.closeContainer();
+            expect(!rewards.spinning(p.getUUID()) && countPrizes(p) >= 1 && countChests(p) == 0, "closing the wheel early still gives the prize");
+            int before = countPrizes(p);
+
+            for (int i = 0; i < 36; i++) {
+                p.getInventory().setItem(i, new ItemStack(Items.DIRT, 64));
+            }
+            rewards.give(p, 1);
+            expect(rewards.pending(p.getUUID()) == 1 && countChests(p) == 0, "inventory full: the chest waits");
+            p.getInventory().clearContent();
+            rewards.deliverPending();
+            expect(rewards.pending(p.getUUID()) == 0 && countChests(p) == 1, "with room again, it is given");
+            expect(before >= 1, "prizes counted");
+
+            java.nio.file.Files.writeString(cfg, "world: st_rew\n5 not_an_item 3\n");
+            String problem = rewards.reload();
+            expect(problem != null && problem.contains("not_an_item") && rewards.prizes().size() == 12, "a typo in the file is reported and the old wheel stays: " + problem);
+            p.getInventory().clearContent();
+            rewards.forget(p.getUUID());
+            server.getPlayerList().remove(p);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        } finally {
+            try {
+                java.nio.file.Files.writeString(cfg, original);
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
+            rewards.reload();
+        }
+    }
+
+    private static void hunger(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        ServerLevel world = worlds.level(worlds.world("st_void"));
+        ServerPlayer p = fakePlayer(server, "Hungry");
+        p.teleportTo(world, 0.5, 80, 0.5, java.util.Set.of(), 0, 0, true);
+        p.getFoodData().setFoodLevel(4);
+        expect(worlds.hunger(world), "hunger is on by default");
+        console(server, "mv hunger st_void off");
+        expect(!worlds.hunger(world) && p.getFoodData().getFoodLevel() == 20, "/mv hunger off: the food bar is full right away");
+        expect(worlds.hunger(level), "other worlds keep normal hunger");
+        console(server, "mv hunger st_void on");
+        p.getFoodData().setFoodLevel(4);
+        expect(worlds.hunger(world) && p.getFoodData().getFoodLevel() == 4, "/mv hunger on: normal hunger again");
+        server.getPlayerList().remove(p);
+    }
+
+    private static void invsee(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        ServerPlayer staff = fakePlayer(server, "Staff");
+        ServerPlayer target = fakePlayer(server, "Holder");
+        var head = net.minecraft.world.entity.EquipmentSlot.HEAD;
+        var pickup = net.minecraft.world.inventory.ContainerInput.PICKUP;
+        var shift = net.minecraft.world.inventory.ContainerInput.QUICK_MOVE;
+        try {
+            staff.getInventory().clearContent();
+            target.getInventory().clearContent();
+            target.getInventory().setItem(0, new ItemStack(Items.DIAMOND, 5));
+            target.getInventory().setItem(20, new ItemStack(Items.APPLE, 3));
+            target.setItemSlot(head, new ItemStack(Items.IRON_HELMET));
+            dev.safemc.safeplots.moderation.InvSee.open(staff, target);
+            var menu = staff.containerMenu;
+            expect(menu instanceof dev.safemc.safeplots.moderation.InvSee.Menu, "the window opens");
+            expect(menu.getSlot(27).getItem().is(Items.DIAMOND) && menu.getSlot(11).getItem().is(Items.APPLE)
+                    && menu.getSlot(36).getItem().is(Items.IRON_HELMET) && menu.getSlot(44).getItem().is(Items.STAINED_GLASS_PANE.pick(net.minecraft.world.item.DyeColor.GRAY)),
+                    "it shows the hotbar (row 4), the inventory (rows 1-3) and the helmet (row 5)");
+            menu.clicked(27, 0, pickup, staff);
+            expect(menu.getCarried().is(Items.DIAMOND) && target.getInventory().getItem(0).isEmpty(), "clicking the diamonds takes them from the player");
+            menu.clicked(45 + 27, 0, pickup, staff); // first slot of the staff's hotbar
+            expect(staff.getInventory().getItem(0).is(Items.DIAMOND) && staff.getInventory().getItem(0).getCount() == 5, "and puts them in the staff's inventory");
+            menu.clicked(11, 0, shift, staff);
+            expect(target.getInventory().getItem(20).isEmpty() && staff.getInventory().countItem(Items.APPLE) == 3, "shift-click takes the apples");
+            menu.clicked(45 + 27, 0, shift, staff);
+            expect(target.getInventory().countItem(Items.DIAMOND) == 5 && staff.getInventory().countItem(Items.DIAMOND) == 0, "shift-click gives the diamonds back");
+            menu.clicked(44, 0, pickup, staff);
+            expect(menu.getCarried().isEmpty() && staff.getInventory().countItem(Items.STAINED_GLASS_PANE.pick(net.minecraft.world.item.DyeColor.GRAY)) == 0, "the gray panes can't be taken");
+            menu.clicked(36, 0, pickup, staff);
+            expect(menu.getCarried().is(Items.IRON_HELMET) && target.getItemBySlot(head).isEmpty(), "the helmet can be taken off");
+            menu.clicked(36, 0, pickup, staff);
+            expect(target.getItemBySlot(head).is(Items.IRON_HELMET), "and put back");
+            target.getInventory().setItem(8, new ItemStack(Items.EMERALD));
+            expect(menu.getSlot(35).getItem().is(Items.EMERALD), "it's live: a new item in the player's hotbar shows up");
+            server.getPlayerList().remove(target);
+            expect(!menu.stillValid(staff), "the window closes when the player logs out");
+        } finally {
+            staff.closeContainer();
+            server.getPlayerList().remove(staff);
+            if (!target.hasDisconnected()) {
+                server.getPlayerList().remove(target);
+            }
+        }
+    }
+
+    private static void afk(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var afk = dev.safemc.safeplots.moderation.Afk.get();
+        int oldTimeout = afk.timeoutMinutes();
+        ServerPlayer p = fakePlayer(server, "Sleepy");
+        ServerPlayer other = fakePlayer(server, "Awake");
+        try {
+            p.teleportTo(level, 7000.5, 120, 7000.5, java.util.Set.of(), 0, 0, true);
+            afk.tick();
+            output(p, "afk");
+            expect(afk.isAfk(p.getUUID()), "/afk: AFK");
+            Component tab = p.getTabListDisplayName();
+            expect(tab != null && tab.getString().equals("[AFK] Sleepy"), "the tab list shows [AFK] Sleepy: " + (tab == null ? null : tab.getString()));
+            p.teleportTo(level, 7001.5, 120, 7000.5, java.util.Set.of(), 0, 0, true);
+            afk.tick();
+            expect(afk.isAfk(p.getUUID()), "moving in the first 3 seconds after /afk doesn't end it");
+            afk.endGrace(p);
+            p.teleportTo(level, 7003.5, 120, 7000.5, java.util.Set.of(), 0, 0, true);
+            afk.tick();
+            Component back = p.getTabListDisplayName();
+            expect(!afk.isAfk(p.getUUID()) && (back == null || !back.getString().contains("AFK")), "moving after that: no longer AFK");
+            output(p, "afk");
+            output(p, "afk");
+            expect(!afk.isAfk(p.getUUID()), "/afk again: back");
+            output(p, "afk");
+            server.getCommands().performPrefixedCommand(p.createCommandSourceStack().withSuppressedOutput(), "help"); // like a real player
+            expect(!afk.isAfk(p.getUUID()), "using a command ends it right away");
+
+            console(server, "afk timeout 5");
+            afk.pretendIdle(p, 4);
+            afk.tick();
+            expect(!afk.isAfk(p.getUUID()), "4 minutes doing nothing: not AFK yet");
+            afk.pretendIdle(p, 5);
+            afk.tick();
+            expect(afk.isAfk(p.getUUID()), "5 minutes doing nothing: AFK by itself");
+            afk.endGrace(p);
+            p.setYRot(90);
+            afk.tick();
+            expect(!afk.isAfk(p.getUUID()), "looking around ends it");
+
+            other.addTag(dev.safemc.safeplots.moderation.Afk.IN_GAME);
+            afk.pretendIdle(other, 30);
+            afk.tick();
+            expect(!afk.isAfk(other.getUUID()), "in a minigame: never AFK by itself");
+            other.removeTag(dev.safemc.safeplots.moderation.Afk.IN_GAME);
+            console(server, "afk timeout 0");
+            afk.pretendIdle(other, 30);
+            afk.tick();
+            expect(!afk.isAfk(other.getUUID()) && afk.timeoutMinutes() == 0, "/afk timeout 0: only with /afk");
+        } finally {
+            console(server, "afk timeout " + oldTimeout);
+            server.getPlayerList().remove(p);
+            server.getPlayerList().remove(other);
+        }
+    }
+
+    private static void damage(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        ServerLevel world = worlds.level(worlds.world("st_void"));
+        ServerPlayer p = fakePlayer(server, "Safe");
+        try {
+            p.teleportTo(world, 40.5, 80, 40.5, java.util.Set.of(), 0, 0, true);
+            p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+            p.connection.markClientLoaded();
+            p.hasChangedDimension(); // a real client says it arrived; until then players can't be hurt
+            expect(worlds.damage(world), "damage is on by default");
+            p.hurtServer(world, world.damageSources().generic(), 5);
+            expect(p.getHealth() < p.getMaxHealth(), "damage on: it hurts");
+            p.setHealth(p.getMaxHealth());
+            console(server, "mv damage st_void off");
+            p.hurtServer(world, world.damageSources().generic(), 5);
+            p.hurtServer(world, world.damageSources().fall(), 8);
+            expect(!worlds.damage(world) && p.getHealth() == p.getMaxHealth(), "/mv damage off: no damage");
+            p.teleportTo(world, 40.5, -100, 40.5, java.util.Set.of(), 0, 0, true);
+            p.hurtServer(world, world.damageSources().fellOutOfWorld(), 4);
+            expect(p.getHealth() == p.getMaxHealth() && p.getY() > 0 && p.level() == world, "falling into the void: back to the spawn, unhurt (y " + (int) p.getY() + ")");
+            expect(worlds.damage(level), "other worlds keep damage");
+            console(server, "mv damage st_void on");
+            // no ticks passed since the first hit: only a bigger one counts during the hurt cooldown
+            p.hurtServer(world, world.damageSources().generic(), 8);
+            expect(worlds.damage(world) && p.getHealth() < p.getMaxHealth(), "/mv damage on: it hurts again");
+        } finally {
+            worlds.setDamage("st_void", true);
+            server.getPlayerList().remove(p);
+        }
+    }
+
+    private static void endPortal(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        BlockPos frame = new BlockPos(5000, 120, 5000), portal = frame.east(2);
+        level.setBlock(frame, Blocks.END_PORTAL_FRAME.defaultBlockState(), 3);
+        level.setBlock(portal, Blocks.END_PORTAL.defaultBlockState(), 3);
+        ServerPlayer p = fakePlayer(server, "Ender");
+        try {
+            p.teleportTo(level, frame.getX() + 0.5, frame.getY() + 1, frame.getZ() + 0.5, java.util.Set.of(), 0, 0, true);
+            console(server, "mv endportal off");
+            click(p, frame, new ItemStack(Items.ENDER_EYE));
+            expect(!worlds.endPortal() && !level.getBlockState(frame).getValue(net.minecraft.world.level.block.EndPortalFrameBlock.HAS_EYE),
+                    "/mv endportal off: an eye of ender doesn't go in the frame");
+            p.teleportTo(level, portal.getX() + 0.5, portal.getY(), portal.getZ() + 0.5, java.util.Set.of(), 0, 0, true);
+            expect(net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
+                    new net.neoforged.neoforge.event.entity.EntityTravelToDimensionEvent(p, net.minecraft.world.level.Level.END)).isCanceled(),
+                    "a lit end portal doesn't take you to the End");
+            p.teleportTo(level, frame.getX() + 0.5, frame.getY() + 1, frame.getZ() + 0.5, java.util.Set.of(), 0, 0, true);
+            expect(!net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
+                    new net.neoforged.neoforge.event.entity.EntityTravelToDimensionEvent(p, net.minecraft.world.level.Level.END)).isCanceled(),
+                    "going to the End not through a portal (/mvtp end) still works");
+            console(server, "mv endportal on");
+            click(p, frame, new ItemStack(Items.ENDER_EYE));
+            expect(worlds.endPortal() && level.getBlockState(frame).getValue(net.minecraft.world.level.block.EndPortalFrameBlock.HAS_EYE),
+                    "/mv endportal on: the eye goes in again");
+        } finally {
+            worlds.setEndPortal(true);
+            server.getPlayerList().remove(p);
+            level.setBlock(frame, Blocks.AIR.defaultBlockState(), 3);
+            level.setBlock(portal, Blocks.AIR.defaultBlockState(), 3);
+        }
+    }
+
+    private static void hubBoard(MinecraftServer server, ServerLevel level, PlotManager pm) throws Exception {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        java.nio.file.Path root = server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT);
+        java.nio.file.Path bw = root.resolve("safebedwars-wins.json"), tr = root.resolve("safetntrun-wins.json");
+        if (java.nio.file.Files.exists(bw) || java.nio.file.Files.exists(tr)) {
+            expect(false, "needs a world without minigame win files");
+            return;
+        }
+        ServerPlayer p = fakePlayer(server, "Lobby");
+        try {
+            p.teleportTo(worlds.level(worlds.world("st_void")), 0.5, 80, 0.5, java.util.Set.of(), 0, 0, true);
+            console(server, "mv topwinners st_void on");
+            expect(!dev.safemc.safeplots.world.HubBoard.showing(p), "no minigame installed: no sidebar");
+            console(server, "mv topwinners st_void off");
+            java.nio.file.Files.writeString(bw, "{\"players\":{\"" + java.util.UUID.randomUUID() + "\":{\"name\":\"Alice\",\"wins\":3},\""
+                    + java.util.UUID.randomUUID() + "\":{\"name\":\"Bob\",\"wins\":5}},\"boards\":{}}");
+            java.nio.file.Files.writeString(tr, "{\"players\":{},\"boards\":{}}");
+            dev.safemc.safeplots.world.HubBoard.update(server);
+            expect(!dev.safemc.safeplots.world.HubBoard.showing(p), "off by default");
+            console(server, "mv topwinners st_void on");
+            String text = dev.safemc.safeplots.world.HubBoard.lines().stream().map(Component::getString).reduce("", (a, b) -> a + "|" + b);
+            expect(dev.safemc.safeplots.world.HubBoard.showing(p), "/mv topwinners on: the sidebar shows there");
+            expect(text.contains("BedWars: Bob (5)"), "BedWars shows its #1 with their wins: " + text);
+            expect(text.contains("TNT Run: -"), "a game with no wins yet says so");
+            expect(!text.contains("Guess the Build"), "a minigame that isn't installed isn't listed");
+            p.teleportTo(level, 0.5, 100, 0.5, java.util.Set.of(), 0, 0, true);
+            dev.safemc.safeplots.world.HubBoard.update(server);
+            expect(!dev.safemc.safeplots.world.HubBoard.showing(p), "leaving that world removes it");
+            p.teleportTo(worlds.level(worlds.world("st_void")), 0.5, 80, 0.5, java.util.Set.of(), 0, 0, true);
+            dev.safemc.safeplots.world.HubBoard.update(server);
+            console(server, "mv topwinners st_void off");
+            expect(!dev.safemc.safeplots.world.HubBoard.showing(p) && !worlds.topWinners("st_void"), "/mv topwinners off removes it");
+        } finally {
+            server.getPlayerList().remove(p);
+            java.nio.file.Files.deleteIfExists(bw);
+            java.nio.file.Files.deleteIfExists(tr);
+            worlds.setTopWinners("st_void", false);
+            dev.safemc.safeplots.world.HubBoard.update(server);
+        }
+    }
+
+    private static void elevator(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        String oldHub = worlds.hub();
+        worlds.setHub("st_void");
+        try {
+            ServerLevel hub = worlds.level(worlds.world("st_void"));
+            BlockPos low = new BlockPos(300, 80, 300), high = low.above(10), blocked = low.above(20);
+            for (BlockPos p : BlockPos.betweenClosed(300, 79, 300, 300, 105, 300)) {
+                hub.setBlock(p, Blocks.AIR.defaultBlockState(), 2);
+            }
+            hub.setBlock(low, Blocks.COAL_BLOCK.defaultBlockState(), 2);
+            hub.setBlock(high, Blocks.COAL_BLOCK.defaultBlockState(), 2);
+            hub.setBlock(blocked, Blocks.COAL_BLOCK.defaultBlockState(), 2);
+            hub.setBlock(blocked.above(), Blocks.STONE.defaultBlockState(), 2); // no room to stand
+            ServerPlayer p = fakePlayer(server, "Rider");
+            p.teleportTo(hub, 300.5, 81, 300.5, java.util.Set.of(), 0, 0, true);
+            p.setOnGround(true);
+            expect(!dev.safemc.safeplots.world.Elevators.ride(p, true), "off by default, even in the hub");
+            console(server, "mv elevators st_void on");
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            p.setOnGround(true);
+            expect(dev.safemc.safeplots.world.Elevators.ride(p, true) && p.blockPosition().equals(high.above()), "/mv elevators on: jumping goes up to the next coal block");
+            p.setOnGround(true);
+            expect(!dev.safemc.safeplots.world.Elevators.ride(p, true), "no second ride right away (cooldown)");
+            p.teleportTo(hub, 300.5, 91, 300.5, java.util.Set.of(), 0, 0, true);
+            p.setOnGround(true);
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            expect(!dev.safemc.safeplots.world.Elevators.ride(p, true), "a coal block without room above isn't used");
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            p.setOnGround(true);
+            expect(dev.safemc.safeplots.world.Elevators.ride(p, false) && p.blockPosition().equals(low.above()), "sneaking goes down");
+            hub.setBlock(low.above(), Blocks.CARPET.pick(net.minecraft.world.item.DyeColor.RED).defaultBlockState(), 2);
+            hub.setBlock(high.above(), Blocks.MOSS_CARPET.defaultBlockState(), 2);
+            p.teleportTo(hub, 300.5, 81.0625, 300.5, java.util.Set.of(), 0, 0, true);
+            p.setOnGround(true);
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            expect(dev.safemc.safeplots.world.Elevators.ride(p, true) && p.blockPosition().equals(high.above()) && p.getY() > high.getY() + 1.05,
+                    "carpets on the coal blocks: still goes up, onto the carpet");
+            p.setOnGround(true);
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            expect(dev.safemc.safeplots.world.Elevators.ride(p, false) && p.blockPosition().equals(low.above()), "and down from a carpet");
+            hub.setBlock(low.above(), Blocks.AIR.defaultBlockState(), 2);
+            hub.setBlock(high.above(), Blocks.AIR.defaultBlockState(), 2);
+            p.teleportTo(hub, 300.5, 81, 300.5, java.util.Set.of(), 0, 0, true);
+            worlds.setHub(oldHub);
+            String dim = PlotManager.dimensionId(hub);
+            if (pm.plot("t_elev") != null) {
+                pm.delete(pm.plot("t_elev"));
+            }
+            ServerPlayer admin = fakePlayer(server, "ElevAdmin");
+            server.getPlayerList().op(admin.nameAndId());
+            pm.setCorner(admin.getUUID(), 1, dim, high.offset(-2, 0, -2));
+            pm.setCorner(admin.getUUID(), 2, dim, high.offset(2, 5, 2));
+            run(admin, "plot create t_elev full");
+            p.teleportTo(hub, 300.5, 81, 300.5, java.util.Set.of(), 0, 0, true);
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            p.setOnGround(true);
+            expect(pm.plot("t_elev") != null && !dev.safemc.safeplots.world.Elevators.ride(p, true)
+                    && p.blockPosition().equals(low.above()), "no elevator into someone else's plot");
+            pm.delete(pm.plot("t_elev"));
+            console(server, "mv elevators st_void off");
+            dev.safemc.safeplots.world.Elevators.resetCooldown(p);
+            p.setOnGround(true);
+            expect(!dev.safemc.safeplots.world.Elevators.ride(p, true), "/mv elevators off: coal is just coal");
+        } finally {
+            worlds.setHub(oldHub);
+        }
+    }
+
+    private static void parkour(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var parkours = dev.safemc.safeplots.parkour.Parkours.get();
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        if (parkours.course("t_pk") != null) {
+            parkours.delete(parkours.course("t_pk"));
+        }
+        ServerPlayer admin = fakePlayer(server, "ParkourAdmin");
+        server.getPlayerList().op(admin.nameAndId());
+        admin.teleportTo(level, 8000.5, Y, 8000.5, java.util.Set.of(), 0, 0, true);
+        run(admin, "parkour create t_pk");
+        admin.teleportTo(8005.5, Y, 8000.5);
+        run(admin, "parkour addcheckpoint t_pk");
+        admin.teleportTo(8010.5, Y, 8000.5);
+        run(admin, "parkour setfinish t_pk");
+        run(admin, "parkour reward t_pk st_void");
+        var course = parkours.course("t_pk");
+        expect(course != null && course.finish != null && course.checkpoints.size() == 1 && "st_void".equals(course.rewardWorld)
+                && course.diamonds == 3, "course with start, 1 checkpoint, finish and a 3 diamond reward");
+
+        ServerPlayer p = fakePlayer(server, "Runner");
+        p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+        p.getAbilities().flying = false;
+        p.teleportTo(level, 8000.5, Y, 8000.5, java.util.Set.of(), 0, 0, true);
+        p.getInventory().setItem(8, new ItemStack(Items.STONE));
+        parkours.check(p, false);
+        expect(parkours.running(p), "stepping on the start starts a run");
+        expect(dev.safemc.safeplots.parkour.LeaveItem.is(p.getInventory().getItem(8)) && p.getInventory().getItem(8).is(Items.BARRIER)
+                && p.getInventory().countItem(Items.STONE) == 1, "a run puts the leave barrier in the last slot (the stone moves)");
+        p.getInventory().clearContent();
+        p.teleportTo(8004.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8010.5, Y, 8000.5);
+        parkours.check(p, false);
+        expect(parkours.running(p), "the finish doesn't count without the checkpoint");
+        p.teleportTo(8005.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8010.5, Y, 8000.5);
+        parkours.check(p, false);
+        expect(!parkours.running(p), "checkpoint then finish ends the run");
+        expect(!dev.safemc.safeplots.parkour.LeaveItem.is(p.getInventory().getItem(8)), "the barrier is gone after the run");
+        expect(parkours.cooldownLeft(p.getUUID(), course) > 23 * 3_600_000L, "the reward has a 24 hour cooldown");
+
+        // The diamonds wait in the st_void inventory.
+        int here = p.getInventory().countItem(Items.DIAMOND);
+        ServerLevel voidLevel = worlds.level(worlds.world("st_void"));
+        p.teleportTo(voidLevel, 0.5, 70, 0.5, java.util.Set.of(), 0, 0, true);
+        dev.safemc.safeplots.inventory.WorldInventories.get().sync(p);
+        expect(here == 0 && p.getInventory().countItem(Items.DIAMOND) == 3, "3 diamonds in the other world's inventory");
+        p.getInventory().clearContent();
+        p.teleportTo(level, 8000.5, Y, 8000.5, java.util.Set.of(), 0, 0, true);
+        dev.safemc.safeplots.inventory.WorldInventories.get().sync(p);
+        p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+
+        parkours.check(p, false);
+        p.teleportTo(8005.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8010.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(voidLevel, 0.5, 70, 0.5, java.util.Set.of(), 0, 0, true);
+        dev.safemc.safeplots.inventory.WorldInventories.get().sync(p);
+        expect(p.getInventory().countItem(Items.DIAMOND) == 0, "no second reward within 24 hours");
+        p.teleportTo(level, 8000.5, Y, 8000.5, java.util.Set.of(), 0, 0, true);
+        dev.safemc.safeplots.inventory.WorldInventories.get().sync(p);
+        p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+
+        parkours.check(p, false);
+        p.teleportTo(8003.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8040.5, Y, 8000.5);
+        parkours.check(p, false);
+        expect(!parkours.running(p), "teleporting stops the run");
+        p.teleportTo(8000.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8001.5, Y, 8000.5);
+        p.getAbilities().flying = true;
+        parkours.check(p, false);
+        p.getAbilities().flying = false;
+        expect(!parkours.running(p), "flying stops the run");
+        p.teleportTo(8000.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8001.5, Y, 8000.5);
+        parkours.check(p, false);
+        expect(parkours.backToCheckpoint(p) && p.blockPosition().getX() == 8000, "/parkour checkpoint goes back to the start");
+        parkours.check(p, false);
+        p.teleportTo(8005.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8007.5, Y - 3, 8000.5);
+        parkours.check(p, false);
+        expect(parkours.running(p) && p.blockPosition().getX() == 8005 && p.blockPosition().getY() == (int) Math.floor(Y),
+                "falling below the course goes back to the last checkpoint");
+        p.teleportTo(8000.5, Y, 8000.5);
+        parkours.check(p, false);
+        p.teleportTo(8001.5, Y, 8000.5);
+        parkours.check(p, false);
+        expect(parkours.running(p) && parkours.checkpointsReached(p) == 1,
+                "back on the start mid-run: same run, the checkpoint (and the time) is kept");
+        p.teleportTo(8000.5, Y, 8000.5);
+        parkours.check(p, false);
+        dev.safemc.safeplots.parkour.LeaveItem.leave(p);
+        expect(!parkours.running(p) && p.getInventory().countItem(Items.BARRIER) == 0, "right-clicking the barrier leaves the parkour");
+        parkours.check(p, false);
+        expect(!parkours.running(p) && !p.blockPosition().equals(new BlockPos(8000, Y, 8000)),
+                "leaving on the start moves you off it, so no new run: " + p.blockPosition());
+        parkours.delete(course);
+    }
+
+    private static void guide(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        String oldHub = worlds.hub();
+        worlds.setHub("st_void");
+        try {
+            ServerLevel hub = worlds.level(worlds.world("st_void"));
+            var content = dev.safemc.safeplots.world.Guide.book().get(net.minecraft.core.component.DataComponents.WRITTEN_BOOK_CONTENT);
+            expect(content != null && content.pages().size() == 5 && content.title().raw().equals("Papatya's Server"),
+                    "the book has 5 pages and its title");
+            var bookName = dev.safemc.safeplots.world.Guide.book().get(net.minecraft.core.component.DataComponents.CUSTOM_NAME);
+            expect(bookName != null && bookName.getString().equals("Guide Papatya's Server"), "the item is named Guide Papatya's Server");
+            ServerPlayer p = fakePlayer(server, "GuideReader");
+            p.teleportTo(hub, 0.5, 70, 0.5, java.util.Set.of(), 0, 0, true);
+            var inv = p.getInventory();
+            inv.clearContent();
+            inv.setItem(0, new ItemStack(Items.DIAMOND, 3));
+            dev.safemc.safeplots.world.Guide.keep(p);
+            expect(dev.safemc.safeplots.world.Guide.isGuide(inv.getItem(0)), "the guide is in the first slot");
+            expect(p.getInventory().countItem(Items.DIAMOND) == 3, "what was there moved to another slot");
+            inv.setItem(5, dev.safemc.safeplots.world.Guide.book());
+            dev.safemc.safeplots.world.Guide.keep(p);
+            int guides = 0;
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                guides += dev.safemc.safeplots.world.Guide.isGuide(inv.getItem(i)) ? 1 : 0;
+            }
+            expect(guides == 1, "extra copies are removed");
+            var dropped = new net.minecraft.world.entity.item.ItemEntity(hub, 0.5, 70, 0.5, dev.safemc.safeplots.world.Guide.book());
+            hub.addFreshEntity(dropped);
+            expect(hub.getEntity(dropped.getUUID()) == null, "a dropped guide disappears");
+            inv.clearContent();
+            p.teleportTo(level, 0.5, Y, 0.5, java.util.Set.of(), 0, 0, true);
+            run(p, "guide");
+            expect(dev.safemc.safeplots.world.Guide.isGuide(inv.getItem(0)) || p.getInventory().countItem(Items.WRITTEN_BOOK) == 1, "/guide gives one outside the hub");
+            inv.clearContent();
+        } finally {
+            worlds.setHub(oldHub);
+        }
+    }
+
+    private static void holo(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var holos = dev.safemc.safeplots.holo.Holograms.get();
+        if (holos.holo("t_holo") != null) {
+            holos.delete(holos.holo("t_holo"));
+        }
+        level.setChunkForced(7000 >> 4, 7000 >> 4, true);
+        level.getChunk(7000 >> 4, 7000 >> 4);
+        if (!level.areEntitiesLoaded(net.minecraft.world.level.ChunkPos.pack(7000 >> 4, 7000 >> 4))) {
+            results.add("info the test spot is still loading; run /selftest holo again in a few seconds");
+            return;
+        }
+        ServerPlayer admin = fakePlayer(server, "HoloAdmin");
+        server.getPlayerList().op(admin.nameAndId());
+        admin.teleportTo(7000.5, Y, 7000.5);
+        run(admin, "holo create t_holo &6&lWelcome\\n&bline two");
+        var holo = holos.holo("t_holo");
+        expect(holo != null && holo.lines.size() == 2, "created with 2 lines");
+        if (holo == null) {
+            return;
+        }
+        expect(level.areEntitiesLoaded(net.minecraft.world.level.ChunkPos.pack(holo.blockPos())), "entities loaded at the spot");
+        var shown = level.getEntity(holo.entity);
+        expect(shown instanceof net.minecraft.world.entity.Display.TextDisplay d
+                && d.getText().getString().equals("Welcome\nline two"), "a text display shows both lines");
+        var first = dev.safemc.safeplots.holo.Holograms.colored("&6&lWelcome").getSiblings().getFirst().getStyle();
+        expect(first.isBold() && first.getColor() != null && first.getColor().getValue() == 0xFFAA00, "&6&l is gold and bold");
+        var hex = dev.safemc.safeplots.holo.Holograms.colored("&#FF0000x").getSiblings().getFirst().getStyle();
+        expect(hex.getColor() != null && hex.getColor().getValue() == 0xFF0000, "&#FF0000 is red");
+        run(admin, "holo setline t_holo 2 &cchanged");
+        shown = level.getEntity(holo.entity);
+        expect(shown instanceof net.minecraft.world.entity.Display.TextDisplay d
+                && d.getText().getString().equals("Welcome\nchanged"), "setline changes the display");
+        run(admin, "holo background t_holo on");
+        expect(shown instanceof net.minecraft.world.entity.Display.TextDisplay d && d.getBackgroundColor() != 0, "background on");
+        java.util.UUID old = holo.entity;
+        shown.discard();
+        holos.ensureAll();
+        expect(holo.entity != null && !holo.entity.equals(old) && level.getEntity(holo.entity) != null, "a killed hologram comes back");
+        var copy = new net.minecraft.world.entity.Display.TextDisplay(net.minecraft.world.entity.EntityTypes.TEXT_DISPLAY, level);
+        copy.setPos(7001, Y, 7001);
+        copy.addTag(dev.safemc.safeplots.holo.Holograms.TAG);
+        level.addFreshEntity(copy);
+        expect(level.getEntity(copy.getUUID()) == null, "a stray copy is removed");
+        double y = holo.y;
+        old = holo.entity;
+        run(admin, "holo height t_holo 2");
+        var moved = level.getEntity(holo.entity);
+        expect(level.getEntity(old) == null && moved != null && Math.abs(moved.getY() - (y + 2)) < 0.01, "height moves it up 2 blocks");
+        run(admin, "holo delete t_holo");
+        expect(holos.holo("t_holo") == null && level.getEntity(moved.getUUID()) == null, "delete removes it");
+    }
+
+    private static void crystals(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        expect(!crystalBlast(level, new BlockPos(6000, Y, 6000)), "an end crystal doesn't explode by default");
+        console(server, "mv crystals world on");
+        expect(crystalBlast(level, new BlockPos(6100, Y, 6000)), "with /mv crystals world on it explodes");
+        console(server, "mv crystals world off");
+
+        // In a creative world, /plot create is full height unless a height is given.
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        if (worlds.world("st_void") == null) {
+            console(server, "mv create st_void void");
+        }
+        ServerLevel creative = worlds.level(worlds.world("st_void"));
+        String dim = PlotManager.dimensionId(creative);
+        ServerPlayer admin = fakePlayer(server, "CreativeAdmin");
+        server.getPlayerList().op(admin.nameAndId());
+        for (String n : List.of("t_cr_full", "t_cr_height", "t_sv_exact")) {
+            if (pm.plot(n) != null) {
+                pm.delete(pm.plot(n));
+            }
+        }
+        console(server, "mv gamemode st_void creative");
+        pm.setCorner(admin.getUUID(), 1, dim, new BlockPos(100, 10, 100));
+        pm.setCorner(admin.getUUID(), 2, dim, new BlockPos(110, 20, 110));
+        run(admin, "plot create t_cr_full");
+        Plot full = pm.plot("t_cr_full");
+        expect(full != null && full.min().getY() == creative.getMinY() && full.max().getY() == creative.getMaxY(),
+                "creative world: /plot create covers the whole height");
+        pm.setCorner(admin.getUUID(), 1, dim, new BlockPos(200, 10, 200));
+        pm.setCorner(admin.getUUID(), 2, dim, new BlockPos(210, 20, 210));
+        run(admin, "plot create t_cr_height height 0 50");
+        Plot chosen = pm.plot("t_cr_height");
+        expect(chosen != null && chosen.min().getY() == 0 && chosen.max().getY() == 50, "creative world: height ... still picks the heights");
+        console(server, "mv gamemode st_void none");
+        pm.setCorner(admin.getUUID(), 1, dim, new BlockPos(300, 10, 300));
+        pm.setCorner(admin.getUUID(), 2, dim, new BlockPos(310, 20, 310));
+        run(admin, "plot create t_sv_exact");
+        Plot exact = pm.plot("t_sv_exact");
+        expect(exact != null && exact.min().getY() == 10 && exact.max().getY() == 20, "other worlds: exact corners as before");
+        for (Plot plot : new Plot[] {full, chosen, exact}) {
+            if (plot != null) {
+                pm.delete(plot);
+            }
+        }
+    }
+
+    /** Hits a crystal on a stone block; true if the stone was blown up. */
+    private static boolean crystalBlast(ServerLevel level, BlockPos at) {
+        level.getChunk(at);
+        level.setBlockAndUpdate(at, Blocks.STONE.defaultBlockState());
+        var crystal = new net.minecraft.world.entity.boss.enderdragon.EndCrystal(level, at.getX() + 0.5, at.getY() + 1, at.getZ() + 0.5);
+        crystal.setShowBottom(false);
+        level.addFreshEntity(crystal);
+        crystal.hurtServer(level, level.damageSources().generic(), 1);
+        boolean blown = !level.getBlockState(at).is(Blocks.STONE);
+        expect(crystal.isRemoved(), "the crystal breaks either way");
+        return blown;
+    }
+
     private static void schemBig(MinecraftServer server, ServerLevel level, PlotManager pm) {
         dev.safemc.safeplots.schematic.Schematics manager = dev.safemc.safeplots.schematic.Schematics.get();
         int w = 296, h = 131, l = 304;
@@ -1169,6 +1978,38 @@ public final class SelfTest {
         player.gameMode.useItemOn(player, player.level(), held, InteractionHand.MAIN_HAND, hit);
     }
 
+    /** Runs a command as the player and returns what it printed. */
+    private static String output(ServerPlayer player, String command) {
+        StringBuilder out = new StringBuilder();
+        net.minecraft.commands.CommandSource capture = new net.minecraft.commands.CommandSource() {
+            @Override
+            public void sendSystemMessage(Component message) {
+                out.append(message.getString()).append('\n');
+            }
+
+            @Override
+            public boolean acceptsSuccess() {
+                return true;
+            }
+
+            @Override
+            public boolean acceptsFailure() {
+                return true;
+            }
+
+            @Override
+            public boolean shouldInformAdmins() {
+                return false;
+            }
+        };
+        try {
+            player.level().getServer().getCommands().getDispatcher().execute(command, player.createCommandSourceStack().withSource(capture));
+        } catch (Exception e) {
+            results.add("FAIL command /" + command + ": " + e.getMessage());
+        }
+        return out.toString();
+    }
+
     private static void run(ServerPlayer player, String command) {
         // Execute synchronously; performPrefixedCommand would queue it until /selftest itself finishes.
         try {
@@ -1179,7 +2020,9 @@ public final class SelfTest {
     }
 
     private static boolean chatBlocked(ServerPlayer player, String text) {
-        return NeoForge.EVENT_BUS.post(new ServerChatEvent(player, text, Component.literal(text))).isCanceled();
+        chatPassed = false;
+        NeoForge.EVENT_BUS.post(new ServerChatEvent(player, text, Component.literal(text)));
+        return !chatPassed;
     }
 
     private static boolean commandBlocked(ServerPlayer player, String command) {

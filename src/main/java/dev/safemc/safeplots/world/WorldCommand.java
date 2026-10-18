@@ -1,6 +1,7 @@
 package dev.safemc.safeplots.world;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -103,11 +104,45 @@ public final class WorldCommand {
                                 .executes(WorldCommand::showAlwaysDay)
                                 .then(Commands.literal("on").executes(c -> setAlwaysDay(c, true)))
                                 .then(Commands.literal("off").executes(c -> setAlwaysDay(c, false)))))
+                .then(Commands.literal("hunger")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
+                                .executes(WorldCommand::showHunger)
+                                .then(Commands.literal("on").executes(c -> setHunger(c, true)))
+                                .then(Commands.literal("off").executes(c -> setHunger(c, false)))))
+                .then(Commands.literal("damage")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
+                                .executes(WorldCommand::showDamage)
+                                .then(Commands.literal("on").executes(c -> setDamage(c, true)))
+                                .then(Commands.literal("off").executes(c -> setDamage(c, false)))))
+                .then(Commands.literal("topwinners")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
+                                .executes(WorldCommand::showTopWinners)
+                                .then(Commands.literal("on").executes(c -> setTopWinners(c, true)))
+                                .then(Commands.literal("off").executes(c -> setTopWinners(c, false)))))
                 .then(Commands.literal("tnt")
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
                                 .executes(WorldCommand::showTnt)
                                 .then(Commands.literal("on").executes(c -> setTnt(c, true)))
                                 .then(Commands.literal("off").executes(c -> setTnt(c, false)))))
+                .then(Commands.literal("claims")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::showClaims)
+                                .then(Commands.argument("plots", IntegerArgumentType.integer(0, 100))
+                                        .executes(WorldCommand::setClaims))))
+                .then(Commands.literal("crystals")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::showCrystals)
+                                .then(Commands.literal("on").executes(c -> setCrystals(c, true)))
+                                .then(Commands.literal("off").executes(c -> setCrystals(c, false)))))
+                .then(Commands.literal("elevators")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::showElevators)
+                                .then(Commands.literal("on").executes(c -> setElevators(c, true)))
+                                .then(Commands.literal("off").executes(c -> setElevators(c, false)))))
+                .then(Commands.literal("endportal")
+                        .executes(WorldCommand::showEndPortal)
+                        .then(Commands.literal("on").executes(c -> setEndPortal(c, true)))
+                        .then(Commands.literal("off").executes(c -> setEndPortal(c, false))))
                 .then(Commands.literal("sethub")
                         .executes(WorldCommand::showHub)
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
@@ -256,6 +291,111 @@ public final class WorldCommand {
                 : "✓ Day, night and weather go on normally in " + world.name() + " again.");
     }
 
+    private static Worlds.@Nullable World hungerWorld(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        Worlds.World world = worlds().world(name);
+        if (world == null) {
+            fail(c, VANILLA.contains(name) ? "Hunger can only be turned off in worlds made with /mv create or /mv import."
+                    : "No world named " + name + ".");
+        }
+        return world;
+    }
+
+    private static int showHunger(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = hungerWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        return ok(c, worlds().hunger(world.name()) ? "Players get hungry normally in " + world.name() + "."
+                : "Hunger is off in " + world.name() + ": the food bar stays full.");
+    }
+
+    private static Worlds.@Nullable World damageWorld(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        Worlds.World world = worlds().world(name);
+        if (world == null) {
+            fail(c, VANILLA.contains(name) ? "Damage can only be turned off in worlds made with /mv create or /mv import."
+                    : "No world named " + name + ".");
+        }
+        return world;
+    }
+
+    private static int showDamage(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = damageWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        return ok(c, worlds().damage(world.name()) ? "Players take damage normally in " + world.name() + "."
+                : "Damage is off in " + world.name() + ": nobody gets hurt there.");
+    }
+
+    private static int setDamage(CommandContext<CommandSourceStack> c, boolean on) {
+        Worlds.World world = damageWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        worlds().setDamage(world.name(), on);
+        return ok(c, on ? "✓ Players take damage normally in " + world.name() + " again."
+                : "✓ Damage is off in " + world.name() + ": nobody gets hurt (no PvP, mobs, falling, lava...). "
+                        + "Falling into the void takes you back to its spawn; /kill still works.");
+    }
+
+    private static int showEndPortal(CommandContext<CommandSourceStack> c) {
+        return ok(c, worlds().endPortal() ? "End portals work normally. /mv endportal off turns them off."
+                : "End portals are off: eyes of ender can't go in the frames and lit portals don't take anyone to the End.");
+    }
+
+    private static int setEndPortal(CommandContext<CommandSourceStack> c, boolean on) {
+        worlds().setEndPortal(on);
+        return ok(c, on ? "✓ End portals work again."
+                : "✓ End portals are off: eyes of ender can't go in the frames and lit portals don't take anyone to the End. "
+                        + "/mvtp end still works for admins.");
+    }
+
+    private static Worlds.@Nullable World topWinnersWorld(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        Worlds.World world = worlds().world(name);
+        if (world == null) {
+            fail(c, VANILLA.contains(name) ? "The top-winners sidebar can only be shown in worlds made with /mv create or /mv import."
+                    : "No world named " + name + ".");
+        }
+        return world;
+    }
+
+    private static int showTopWinners(CommandContext<CommandSourceStack> c) {
+        Worlds.World world = topWinnersWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        return ok(c, worlds().topWinners(world.name()) ? "Players in " + world.name() + " see the top winner of each minigame on the side of their screen."
+                : "No top-winners sidebar in " + world.name() + ". /mv topwinners " + world.name() + " on adds it.");
+    }
+
+    private static int setTopWinners(CommandContext<CommandSourceStack> c, boolean on) {
+        Worlds.World world = topWinnersWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        worlds().setTopWinners(world.name(), on);
+        HubBoard.update(c.getSource().getServer());
+        return ok(c, on ? "✓ Players in " + world.name() + " now see the top winner of each minigame on the side of their screen."
+                : "✓ The top-winners sidebar is off in " + world.name() + ".");
+    }
+
+    private static int setHunger(CommandContext<CommandSourceStack> c, boolean on) {
+        Worlds.World world = hungerWorld(c);
+        if (world == null) {
+            return 0;
+        }
+        worlds().setHunger(world.name(), on);
+        ServerLevel level = worlds().level(world);
+        if (!on && level != null) {
+            level.players().forEach(WorldRules::feed);
+        }
+        return ok(c, on ? "✓ Players get hungry normally in " + world.name() + " again."
+                : "✓ Hunger is off in " + world.name() + ": the food bar stays full, nobody starves.");
+    }
+
     private static int showTnt(CommandContext<CommandSourceStack> c) {
         String name = StringArgumentType.getString(c, "world");
         if (!VANILLA.contains(name) && worlds().world(name) == null) {
@@ -272,6 +412,76 @@ public final class WorldCommand {
         worlds().setTnt(name, tnt);
         return ok(c, tnt ? "✓ TNT explodes in " + name + " now."
                 : "✓ TNT no longer explodes in " + name + ": lit TNT and TNT minecarts just disappear, without damage.");
+    }
+
+    private static int showClaims(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        Integer limit = worlds().claimLimit(name);
+        int n = limit == null ? 1 : limit;
+        if (n == 0) {
+            return ok(c, "Players can't claim plots in " + name + ". Change it with /mv claims " + name + " <number>.");
+        }
+        return ok(c, "Each player may have " + n + " plot" + (n == 1 ? "" : "s") + " in " + name
+                + (limit == null ? " (the default)" : "") + ", with /plot claimhere or signs."
+                + " Change it with /mv claims " + name + " <number> (0: no plots).");
+    }
+
+    private static int setClaims(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        int n = IntegerArgumentType.getInteger(c, "plots");
+        worlds().setClaimLimit(name, n == 1 ? null : n);
+        if (n == 0) {
+            return ok(c, "✓ Players can't claim plots in " + name + " now. Plots already there stay;"
+                    + " admins can still make plots and give them with /plot setowner.");
+        }
+        return ok(c, "✓ Each player may now have " + n + " plot" + (n == 1 ? "" : "s") + " in " + name
+                + " (with /plot claimhere or signs). Players with a higher /plot setlimit keep theirs."
+                + " Plots they already have stay if you lower it later.");
+    }
+
+    private static int showCrystals(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        return ok(c, worlds().crystals(name) ? "End crystals explode in " + name + "."
+                : "End crystals don't explode in " + name + " (the default).");
+    }
+
+    private static int setCrystals(CommandContext<CommandSourceStack> c, boolean on) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        worlds().setCrystals(name, on);
+        return ok(c, on ? "✓ End crystals explode in " + name + " now."
+                : "✓ End crystals no longer explode in " + name + ": they just break, without damage.");
+    }
+
+    private static int showElevators(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        return ok(c, worlds().elevators(name) ? "Coal blocks are elevators in " + name + " (jump: up, sneak: down)."
+                : "Coal blocks are normal in " + name + ". Turn elevators on with /mv elevators " + name + " on.");
+    }
+
+    private static int setElevators(CommandContext<CommandSourceStack> c, boolean on) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        worlds().setElevators(name, on);
+        return ok(c, on ? "✓ Coal blocks are elevators in " + name + " now: jump on one to go to the next one straight above,"
+                + " sneak to go down. They never take anyone into a plot they can't build in."
+                : "✓ Coal blocks are normal in " + name + " now.");
     }
 
     private static int showHub(CommandContext<CommandSourceStack> c) {
@@ -401,16 +611,11 @@ public final class WorldCommand {
 
     private static int list(CommandContext<CommandSourceStack> c) {
         List<String> lines = new ArrayList<>();
-        lines.add("Worlds (go with /mvtp <world>):");
-        lines.add(" - world, nether, end (vanilla, inventory " + Worlds.MAIN_GROUP + ")");
-        for (Worlds.World world : worlds().worlds()) {
-            ServerLevel level = worlds().level(world);
-            int players = level == null ? 0 : level.players().size();
-            lines.add(" - " + world.name() + ": " + world.type().id() + ", seed " + world.seed() + ", inventory " + world.inventoryGroup()
-                    + ", " + players + " player" + (players == 1 ? "" : "s"));
-        }
-        if (worlds().worlds().isEmpty()) {
-            lines.add("No extra worlds yet. Create one with /mv create <name> <type> [seed].");
+        lines.add("Worlds:");
+        for (String name : Stream.concat(VANILLA.stream(), worlds().worlds().stream().map(Worlds.World::name)).toList()) {
+            ServerLevel level = worlds().levelByName(name);
+            List<String> players = level == null ? List.of() : level.players().stream().map(p -> p.getGameProfile().name()).sorted().toList();
+            lines.add(" - " + name + ": " + (players.isEmpty() ? "nobody" : String.join(", ", players)));
         }
         return ok(c, String.join("\n", lines));
     }

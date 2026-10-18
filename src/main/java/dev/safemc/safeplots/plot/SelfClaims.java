@@ -4,6 +4,7 @@ import dev.safemc.safeplots.moderation.ModerationManager;
 import dev.safemc.safeplots.world.Worlds;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.minecraft.ChatFormatting;
@@ -28,7 +29,7 @@ public final class SelfClaims {
     /** Free blocks required between a self-made plot and any other plot. */
     public static final int GAP = 10;
     /** No self-made plot may come closer than this to a world's spawn. */
-    public static final int SPAWN_RADIUS = 100;
+    public static final int SPAWN_RADIUS = 10;
     public static final int CONFIRM_SECONDS = 30;
     private static final int REFRESH_TICKS = 40;
 
@@ -55,16 +56,25 @@ public final class SelfClaims {
         if (moderation != null && moderation.isJailed(id)) {
             return "You can't claim land while in jail.";
         }
-        for (Plot plot : manager.plotsOwnedBy(id)) {
-            if (plot.selfClaimed()) {
-                return "You already have your own plot (" + plot.name() + ", around " + center(plot)
-                        + "). Use /plot abandon " + plot.name() + " first if you want to claim somewhere else.";
-            }
+        String dimension = candidate.dimension();
+        int selfMax = manager.worldClaims(dimension);
+        if (selfMax == 0) {
+            return "You can't claim land in this world.";
         }
-        int owned = manager.plotsOwnedBy(id).size();
-        int max = manager.maxClaims(id);
+        List<Plot> here = manager.plotsOwnedBy(id, dimension);
+        List<Plot> selfMade = here.stream().filter(Plot::selfClaimed).toList();
+        if (selfMade.size() >= selfMax) {
+            Plot plot = selfMade.getFirst();
+            return selfMax == 1
+                    ? "You already have your own plot in this world (" + plot.name() + ", around " + center(plot)
+                            + "). Use /plot abandon " + plot.name() + " first if you want to claim somewhere else."
+                    : "You already made " + selfMade.size() + " plots in this world, the most allowed here."
+                            + " Use /plot abandon <plot> first if you want to claim somewhere else.";
+        }
+        int owned = here.size();
+        int max = manager.maxClaims(id, dimension);
         if (owned >= max) {
-            return "You already own " + owned + "/" + max + " plots. Ask an admin for another claim slot.";
+            return "You already own " + owned + "/" + max + " plots in this world. Ask an admin for another claim slot.";
         }
         ServerLevel level = manager.level(candidate.dimension());
         if (level != null && Worlds.protectedHub(level)) {

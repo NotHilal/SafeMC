@@ -52,6 +52,7 @@ Admin means operator permission level 2 or higher (the default `/op` level is 4)
 | `/plot cancel` | Cancels a `/plot claimhere` that isn't confirmed yet, or stops moving (or, for admins, linking) a sign |
 | `/ppt help` (or just `/ppt`) | Lists every command you can use; admins also see the admin and moderation commands. Click a line to type it |
 | `/hub` | Takes you back to the hub's spawn (3 s warm-up, like `/home`). Other worlds are reached by portal |
+| `/plot list` | Lists your plots in the world you're in, with their center, corners and height, and how many you may have there |
 | `/plot showlimits [plot]` | Outlines the plot's borders with glowing particles (only you see them). Run it again to hide them. Admins can show any plot |
 
 Without `[plot]`, these use the plot you are standing in. `trust`, `untrust`, `movesign` and `showlimits` also fall back
@@ -74,8 +75,8 @@ to your only plot if you have exactly one; if you have several, name the one you
 | `/plot removeowner <name>` | Makes the plot available again |
 | `/plot setlimit <player> <number>` | Sets how many plots a player may own |
 | `/plot addlimit <player> <amount>` | Adds to (or with a negative number, removes from) that limit |
-| `/plot list` | Lists all plots |
-| `/plot list <player>` | Lists a player's plots and their limit |
+| `/plot showall` | Lists all plots |
+| `/plot showall <player>` | Lists a player's plots and their limit |
 | `/plot info [name]` | Shows the name, status, owner, area, dimension, trusted players and sign. Without a name, shows the plot you're in |
 | `/plot bypass` | Toggles protection bypass for yourself |
 
@@ -106,6 +107,9 @@ protected). Everything outside that box, like a mine underneath, stays open to e
 ```
 
 Note: anyone can build above the top of a plot, so make it tall enough (or use `full` / `height`).
+
+In a creative world (`/mv gamemode <world> creative`), plain `/plot create` and `/plot redefine` are always
+`full`: from bedrock to the build limit. `height ...` still works there to pick the heights yourself.
 
 Existing plots can be changed at any time; this never changes any blocks:
 
@@ -139,14 +143,16 @@ Players don't need an admin or a sign: stand in the middle of the land you want 
    build limit (so nobody can dig under or build over it).
 2. Click **[Confirm]** or type `/plot confirm` within 30 seconds. To move it, walk somewhere else and run
    `/plot claimhere` again; `/plot cancel` drops it.
-3. The plot is protected like any other: trust friends with `/plot trust`, see the border with `/plot showlimits`.
+3. The border goes away once the plot is made. The plot is protected like any other: trust friends with
+   `/plot trust`, see the border again with `/plot showlimits`.
 
 Rules:
 
-- **One** self-made plot per player, and it counts toward the normal claim limit (1 by default), so a player
-  who already owns a sign plot can't make one unless an admin raises their limit.
+- **One** self-made plot per player **in each world** (or as many as `/mv claims` allows there), and it counts
+  toward the normal claim limit (1 per world by default), so a player who already owns a sign plot in that world
+  can't make one unless an admin raises their limit.
 - At least **10 free blocks** between it and any other plot.
-- Not within **100 blocks of a world's spawn** (the main world's spawn, an `/mv` world's spawn, or 0,0 in the
+- Not within **10 blocks of a world's spawn** (the main world's spawn, an `/mv` world's spawn, or 0,0 in the
   Nether and End). Jailed players can't claim.
 - `/plot abandon` deletes a self-made plot (the buildings stay, unprotected), so the player can claim again
   somewhere else. Admins manage them like any plot: `/plot info`, `/plot delete`, `/plot setowner`, `/plot redefine`.
@@ -154,9 +160,14 @@ Rules:
 
 ## Claim limits
 
-Each player has a single number, `maxClaims`, which starts at **1**. There's no upper limit.
+Limits count **per world**: by default each player may own **1** plot in each world (survival, creative, ...).
 
-- `/plot setlimit Steve 3` lets Steve own up to 3 plots.
+- `/mv claims <world> <number>` changes it for everyone in one world, e.g. `/mv claims creative 3` gives each
+  player 3 plots there (signs or `/plot claimhere`). `0` means nobody can claim plots in that world
+  (admins can still make plots and give them with `/plot setowner`). `/mv claims <world>` shows the current number.
+- Each player also has their own number, `maxClaims` (starts at 1, no upper limit). In a world they may own
+  whichever is higher: their own number or the world's. A player's own 0 means no plots anywhere.
+- `/plot setlimit Steve 3` lets Steve own up to 3 plots in each world.
 - `/plot addlimit Steve 1` raises Steve's current limit by one.
 
 Lowering a limit doesn't take away plots a player already owns; they just can't claim more.
@@ -235,6 +246,7 @@ All require op level 2 or higher. Durations look like `30m`, `2h`, `7d`, `1w` or
 | Command | What it does |
 |---|---|
 | `/vanish` | Toggles invisibility for yourself: non-admins can't see you and you disappear from their tab list (they see "left the game"). Other admins still see you. Ends when you log out |
+| `/invsee <player>` | Opens an online player's inventory in a chest window: rows 1-3 their inventory, row 4 their hotbar, row 5 helmet, chestplate, leggings, boots and off hand. Take items out or put items in (also with shift-click); it changes their real inventory live. Closes if they log out |
 | `/freeze <player>` | The player can't move, build, interact, fight or use commands (except `/msg`, to talk to staff) and can't be hurt. Stays frozen after relogging or a restart |
 | `/unfreeze <player>` | Unfreezes them |
 | `/mute <player> [duration\|perm] [reason]` | Blocks chat and private messages. No duration = permanent. Survives restarts |
@@ -256,6 +268,15 @@ that have the same owner.
 
 Protection doesn't depend on the sign. If the sign is destroyed, the plot stays claimed and protected. If a
 sign is placed at the same spot again, it immediately becomes the claim sign again.
+
+### AFK
+
+`/afk` shows everyone you're away: your name turns gray with **[AFK]** in the tab list, and everyone gets a gray
+"Steve is now AFK" line. Players also go AFK by themselves after **5 minutes** of doing nothing (`/afk timeout
+<minutes>` changes it, admins; `0` means only with `/afk`; saved in `<world>/safeplots-afk.json`). It ends when you move,
+look around, chat, use a command or click (or `/afk` again); right after `/afk` moving only counts after 3 seconds, so
+you can stop walking first. Players in a SafeBedwars, SafeTntRun or SafeGuessBuild game never go AFK by themselves
+(the games tag them while they play), and vanished admins never show as AFK. Nobody gets kicked for being AFK.
 
 ### No-mob-spawn zones
 
@@ -279,12 +300,16 @@ walk in from outside. Mobs that were already there stay until killed. Zones are 
 Admins can add worlds while the server runs, like Multiverse. Each one is a normal server dimension
 (`safeplots:<name>`) built from vanilla dimension types, so players join with a plain vanilla client.
 
+Chat shows the world each player is in before their name: `[hub] <Steve> hi`. The main worlds show as `world`,
+`nether` and `end`. Mutes and minigame chat (Guess the Build guesses) still work as before.
+
 | Command | What it does |
 |---|---|
 | `/mv create <name> <type> [seed]` | Creates and loads a world. Types: `normal`, `amplified`, `large_biomes`, `flat`, `void`, `nether`, `end`. No seed = random; a word is hashed like on the vanilla create-world screen |
 | `/mv import <name> <folder> [type] [seed]` | Turns a world save from `<server>/imports/<folder>` into a world (see below) |
 | `/mv list` | Lists the worlds (also just `/mv`) |
 | `/mv setspawn` | Sets the spawn of the world you're in |
+| `/mv claims <world> [number]` | How many plots each player may own in that world (default 1, `0` = no claiming); see [Claim limits](#claim-limits) |
 | `/mv group` | Lists the inventory groups (see [Inventories per world](#inventories-per-world)) |
 | `/mv group <world> <group>` | Puts a world in an inventory group (`main` = the main world's inventory) |
 | `/mv portal create <name> <world>` | Turns the selected area into a portal to that world (see [Portals](#portals)) |
@@ -300,9 +325,14 @@ Admins can add worlds while the server runs, like Multiverse. Each one is a norm
 | `/mv gamemode <world> <mode>` | Everyone arriving in that world is put in `survival`, `creative`, `adventure` or `spectator` mode; `none` removes the rule (see [World rules](#world-rules)) |
 | `/mv mobs <world> on\|off` | Turns natural mob spawning in that world on or off |
 | `/mv alwaysday <world> on\|off` | Always noon and no weather (rain, snow, thunder) in that world |
+| `/mv hunger <world> on\|off` | `off`: the food bar stays full in that world, nobody starves |
+| `/mv damage <world> [on\|off]` | Off: nobody takes damage in that world, like in the hub: no PvP, mobs, falling, lava, drowning... Falling into the void takes you back to the world's spawn; `/kill` still works. Not for minigame worlds (the games need damage) |
+| `/mv endportal [on\|off]` | Off: eyes of ender can't be put in end portal frames, and lit end portals (made before, or natural ones) don't take anyone to the End. `/mvtp end` still works for admins. On by default |
+| `/mv topwinners <world> [on\|off]` | On: players in that world (e.g. your games hub) see the top winner of each minigame on the side of their screen. See [Top-winners sidebar](#top-winners-sidebar-games-hub) |
 | `/killall [world]` | Removes all hostile mobs in that world (without a world: the one you're in). No drops. Pets, mobs with a name tag, leashed mobs and BedWars shop villagers are spared. Only loaded areas (near players) |
 | `/killall <world> all` | Same, but removes every mob (animals, villagers, ...), still sparing pets, named and leashed mobs |
 | `/mv tnt <world> on\|off` | TNT is **off everywhere by default**; this turns it on (or off again) for one world. Also works for `world`, `nether` and `end` |
+| `/mv crystals <world> on\|off` | End crystal explosions, also **off everywhere by default**, like TNT |
 | `/mv sethub <world>` | Makes that world the hub: `/hub` goes to its spawn and players joining for the first time start there. `world` (the default) = the main world. Without `<world>`, shows the current hub |
 
 The first visit picks a safe spot near 0,0 as the spawn (a void world gets a small stone platform). Worlds
@@ -337,10 +367,15 @@ For worlds made with `/mv create` or `/mv import`. For example, a creative world
 - **`/mv mobs <world> off`**: no mobs spawn there by themselves: no natural spawns, none from world generation,
   structures, spawners, patrols or wandering traders. Spawn eggs, `/summon`, breeding and buckets still work.
   Mobs already there stay until they despawn.
+- **`/mv hunger <world> off`**: the food bar stays full there (topped up every second), so nobody has to eat or
+  can starve, e.g. in a minigames or hub world. `on` turns normal hunger back on.
 - **`/mv tnt <world> on`**: TNT is **off in every world by default**: lit TNT and TNT minecarts just disappear,
   without damage. This turns it on for one world (`off` turns it off again). Unlike the other rules this also works
   for the vanilla worlds (`world`, `nether`, `end`); other mods' dimensions always stay off. For example, TNT only
-  in a BedWars world: `/mv tnt bedwars on`. Creepers, beds and end crystals still explode.
+  in a BedWars world: `/mv tnt bedwars on`. Creepers and beds still explode.
+- **`/mv crystals <world> on`**: end crystals are **off in every world by default** too: a destroyed crystal
+  just breaks, without an explosion. This turns them on for one world, also `world`, `nether` and `end`.
+  The dragon fight still works (destroying the crystals on the pillars stops the healing as usual).
 - **`/mv alwaysday <world> on`**: it's always noon there and there is no weather. All worlds share one clock,
   so players there are shown noon while the real time goes on: mobs still spawn when it's really night (add
   `/mv mobs <world> off`), and beds work by the real time. For the vanilla worlds use `/gamerule advance_time false`
@@ -415,6 +450,8 @@ and WorldEdit 6 (Minecraft 1.12 and older).
 |---|---|
 | `/schem list` | Lists the files (also just `/schem`) |
 | `/schem load <name>` | Loads one into your clipboard. Use quotes for names with spaces |
+| `/schem copy <from> <to>` | Copies the blocks in that box (with chest contents, signs etc.) into your clipboard. Where you stand counts: `/schem paste` puts it at the same spot relative to you, in any world |
+| `/schem save <name>` | Saves your clipboard as `schematics/<name>.schem` (WorldEdit format), to load again later or use on another server |
 | `/schem info` | Size, rotation, and the area it would cover if pasted where you stand |
 | `/schem rotate <degrees>` | Turns the clipboard 90, 180, 270 (or -90) degrees clockwise, seen from above. Adds up |
 | `/schem paste` | Pastes where you stand, the same way WorldEdit would place it. Air in the schematic replaces blocks |
@@ -428,6 +465,9 @@ and WorldEdit 6 (Minecraft 1.12 and older).
   `.schematic` files with number ids (like `35:14` for red wool) are translated with the same table Minecraft
   uses to upgrade pre-1.13 worlds, including chest contents, sign text, bed and banner colors, flower pot plants,
   skulls and note blocks. Blocks from mods that aren't installed become air (you're told how many).
+  Leaves from these files never decay, and after pasting, glass panes, iron bars, fences, walls and stairs are
+  joined to their neighbours (old files don't store that). A pane or iron bar touching nothing gets the "+" cross
+  look it had before 1.9.
 - Not supported yet: entities in the schematic (item frames, armor stands, paintings), biomes, and Bedrock
   (Pocket Edition) schematics. Maximum size 32 million blocks.
 - Pastes ignore plot protection: an admin can paste anywhere. Clipboards and undo history are reset by a restart.
@@ -446,6 +486,131 @@ and WorldEdit 6 (Minecraft 1.12 and older).
 - Trees growing from saplings planted just outside a plot can grow leaves into it.
 - Machines from other mods are blocked inside plots if they act as a "fake player", but a mod that edits
   blocks directly (without events) can bypass protection. Test any tech mods you add.
+
+## Holograms (admins)
+
+Floating colored text anywhere, without a sign. It's a vanilla text display, so players need nothing installed.
+It always turns to face the player and can't be broken.
+
+| Command | What it does |
+| --- | --- |
+| `/holo create <name> <text>` | New hologram at your eye height (step back to see it) |
+| `/holo addline <name> <text>` | Adds a line at the bottom |
+| `/holo setline <name> <n> <text>` / `removeline <name> <n>` | Changes / removes line n (1 is the top) |
+| `/holo edit <name> <text>` | Replaces all its text |
+| `/holo movehere <name>` | Moves it to your eye height, also to another world |
+| `/holo height <name> <blocks>` | Up (or down with a minus, e.g. `-0.5`) |
+| `/holo scale <name> <size>` | Bigger or smaller, 0.25 to 10 (1 is normal) |
+| `/holo background <name> on\|off` | Dark box behind the text (off by default) |
+| `/holo tp <name>` | Go stand in front of it |
+| `/holo list` | All holograms with where they are; click one to go there |
+| `/holo delete <name>` | Removes it |
+
+**Text:** `&` codes as in chat: `&0`-`&9` and `&a`-`&f` colors (`&6` gold, `&b` aqua, `&c` red, `&e` yellow,
+`&a` green, `&d` pink, `&f` white), `&l` bold, `&o` italic, `&n` underlined, `&m` struck through, `&k` scrambled,
+`&r` reset, `&#FF55AA` any color. A color resets bold etc. before it, so write `&6&lTitle`, not `&l&6Title`.
+Type `\n` for a new line, and `&&` for a plain `&`. Example:
+
+```
+/holo create welcome &6&lWelcome to SafeMC!\n&7Right-click a sign to play
+```
+
+Holograms are saved to `<world>/safeplots-holograms.json`. If one is killed (`/kill @e`), it comes back within
+5 seconds; an old copy left behind by a move is removed when its chunk loads.
+
+## Elevators
+
+A **coal block** can be an elevator: standing on it, **jump** to go to the next coal block straight above, **sneak**
+to go to the next one straight below (up to 64 blocks, and it needs 2 free blocks on top to land). Place coal blocks
+in the same column on each floor. A **carpet** (any color, or moss carpet) on top of the coal block is fine, so
+the elevator can be hidden under it.
+
+- **Off in every world by default**, the hub too. `/mv elevators <world> on` turns them on for a world (also
+  `world`, `nether`, `end`), `off` again; `/mv elevators <world>` shows it. Keep it off in minigame worlds (BedWars islands!).
+- An elevator never takes anyone into a plot they can't build in, so a coal block dug in under someone's house is
+  no way in.
+- Teleporting this way stops a parkour run, so don't put one inside a parkour.
+
+## Parkour (admins)
+
+A parkour with a timer, checkpoints in order and a diamond reward that goes **straight into the player's inventory
+of another world** (e.g. survival), even while they are in the hub. Each reward can be won once every 24 hours.
+
+1. Stand on the start block (or its pressure plate): `/parkour create hub`.
+2. Optional, on each checkpoint, in order: `/parkour addcheckpoint hub`. Players must reach them all, in order,
+   before the finish counts, so they can't skip the hard part by walking.
+3. On the last block: `/parkour setfinish hub`.
+4. `/parkour reward hub survival` (3 diamonds; `/parkour reward hub survival 5` for 5). Use the world's `/mvtp` name.
+5. `/parkour info hub` checks it. Put holograms on the start and finish, e.g. `/holo create pk_start &a&lSTART`.
+
+Players step on the start to begin (`Started parkour!`); checkpoints just make a sound. Falling (feet 2 blocks below
+the course's lowest block, or the height set with `/parkour fallheight hub` where you stand; `... auto` undoes it),
+falling into the void or `/parkour checkpoint` takes them back to their last checkpoint, or the start. The time keeps
+going from their first step on the start until the finish; only finishing or leaving ends a run. During a run the last hotbar slot holds a **Leave parkour** barrier: right-clicking it (or
+`/parkour leave`) stops the run. It disappears after the run and can't be dropped, placed or put in a chest. Flying, elytra, creative or
+spectator mode and teleporting stop the run. At the finish: their time, then `+3 diamonds added to your survival
+inventory!`, or when they can win again. If that inventory is full they're told to make room, and the reward isn't
+used up. `/parkour` shows players when their next reward is. `/parkour cooldown hub 12` changes the 24 hours;
+`/parkour resetcooldown hub <player>` lets someone win again right away. Saved to `<world>/safeplots-parkour.json`.
+
+## Top-winners sidebar (games hub)
+
+`/mv topwinners <world> on` (admins) shows players in that world - your games hub - a sidebar on the right of their
+screen with the player with the most wins in each installed minigame (SafeBedwars, SafeTntRun, SafeGuessBuild), one line per game
+(`BedWars: Steve (42)`, `-` when nobody won yet). `off` removes it; without on|off it says whether it's on. It's read from the games' own win files
+(`<world>/safebedwars-wins.json` ...) and updates a few seconds after a game ends; resetting a game's leaderboard resets
+it here too. It disappears when they leave that world (the games show their own sidebar).
+
+## Winner Chests (minigame rewards)
+
+Winning a game of SafeBedwars, SafeTntRun or SafeGuessBuild (with at least 2 players, lasting at least a minute) gives a **Winner Chest**, at most
+2 per player per day (resets at midnight, server time). The chest goes straight into the player's inventory of the
+reward world (e.g. survival), so it only shows up there. If that inventory is full, it waits and is given as soon as
+there is room. Right-clicking it in the reward world opens a wheel that spins for about 3 seconds and stops on a prize;
+closing the window early still gives it. Anywhere else it just says where to open it, and it can't be placed.
+
+Everything is set in `config/safeplots-rewards.txt` (made on first start); run `/rewards reload` after editing:
+
+```
+world: world           # the /mv world whose inventory gets the chests
+daily: 2               # chests per player per day
+16 coal 25             # chance (weight), item, count
+6 enchanted_book 1 efficiency 4 | fortune 3 | protection 4 | mending 1   # books: one of these, at random
+5 enchanted_golden_apple 2
+1 papatya_book 1   # the rarest reward: a book signed by Papatya, with the winner's name, to bring to her
+```
+
+The chance of a prize is its weight divided by all weights together (100 by default, so they are %). Default: 25 coal 16,
+15 steak 15, 20 iron 14, 12 XP bottles 12, 5 golden apples 10, 6 diamonds 6, an enchanted book (Efficiency IV, Fortune
+III, Protection IV or Mending) 6, a totem of undying 5, a netherite ingot 5, a netherite upgrade smithing template 5,
+2 enchanted golden apples 5, and 1 for the rarest reward: a book signed by
+Papatya with the winner's name, telling them to come and give it to her. A line like `1 papatya_book 1` added to an
+existing config file (then `/rewards reload`) puts it on the wheel there too.
+
+| Command | What it does |
+| --- | --- |
+| `/rewards` | How many chests you got today, and every prize with its chance |
+| `/rewards give <players> [count]` | Give Winner Chests (admins, no daily limit) |
+| `/rewards reload` | Read the config file again (a typo is reported and the old settings stay) |
+
+The minigames run `/rewards win <player>` from the console when someone wins; without SafePlots they just skip it.
+
+## Guide book
+
+Everyone in the hub always has the guide book in their **first hotbar slot** (only when the hub is a `/mv` world,
+see `/mv sethub`). It can't be dropped, put in a chest or moved elsewhere: it goes back to slot 1, and whatever was
+there moves to a free slot (or drops at their feet if the inventory is full). The hub has its own inventory, so the
+book stays there. `/guide` gives a copy anywhere else.
+
+Its text is in `config/safeplots-guide.txt`, made with a starting text on the first run:
+
+- `title:` (max 32 letters) and `author:` at the top are the cover;
+- `name:` is the colored name on the item, e.g. `name: &f&lGuide &e&lPapatya's &f&lServer`;
+- a line with only `---` starts a new page; a page fits about 14 lines of 19 letters;
+- `&` colors as for holograms (`&0` black is the normal book color, `&l` bold, `&r` back to normal);
+- lines starting with `#` are ignored.
+
+After editing, run `/guide reload`: players in the hub get the new book right away.
 
 ## Edge cases
 

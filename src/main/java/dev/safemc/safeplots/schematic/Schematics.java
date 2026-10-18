@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -23,7 +24,16 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.ProblemReporter;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.RedstoneWireBlock;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.WallBlock;
+import net.minecraft.world.level.block.state.properties.ChestType;
+import net.minecraft.world.level.block.CrossCollisionBlock;
+import net.minecraft.world.level.block.IronBarsBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -212,6 +222,81 @@ public final class Schematics {
         return undos == null ? 0 : undos.size();
     }
 
+    // ---------------------------------------------------------------- copy
+
+    /**
+     * Queues copying the blocks from {@code min} to {@code max} (with chests' contents, sign text etc.) into a
+     * schematic. Like WorldEdit, it remembers where the player stood: pasting puts it at the same spot relative to them.
+     */
+    public void copy(ServerPlayer player, BlockPos min, BlockPos max, Consumer<Schematic> done) {
+        ServerLevel level = player.level();
+        UUID owner = player.getUUID();
+        int width = max.getX() - min.getX() + 1;
+        int height = max.getY() - min.getY() + 1;
+        int length = max.getZ() - min.getZ() + 1;
+        int volume = width * height * length;
+        BlockPos offset = min.subtract(player.blockPosition());
+        Map<BlockState, Integer> index = new HashMap<>();
+        List<BlockState> palette = new ArrayList<>();
+        int[] blocks = new int[volume];
+        Map<Integer, CompoundTag> blockEntities = new HashMap<>();
+        jobs.add(new Job() {
+            int next;
+
+            @Override
+            public UUID owner() {
+                return owner;
+            }
+
+            @Override
+            public ServerLevel level() {
+                return level;
+            }
+
+            @Override
+            public String progress() {
+                return "Copying: " + (int) (100L * next / volume) + "%";
+            }
+
+            @Override
+            public boolean step(long deadline) {
+                BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+                int layer = width * length;
+                while (next < volume) {
+                    if ((next & 127) == 0 && System.nanoTime() > deadline) {
+                        return false;
+                    }
+                    int i = next++;
+                    int y = i / layer;
+                    int rest = i - y * layer;
+                    int z = rest / width;
+                    pos.set(min.getX() + rest - z * width, min.getY() + y, min.getZ() + z);
+                    BlockState state = level.getBlockState(pos);
+                    Integer id = index.get(state);
+                    if (id == null) {
+                        id = palette.size();
+                        palette.add(state);
+                        index.put(state, id);
+                    }
+                    blocks[i] = id;
+                    if (state.hasBlockEntity()) {
+                        BlockEntity be = level.getBlockEntity(pos);
+                        if (be != null) {
+                            CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
+                            tag.remove("x");
+                            tag.remove("y");
+                            tag.remove("z");
+                            blockEntities.put(i, tag);
+                        }
+                    }
+                }
+                done.accept(new Schematic("copy", width, height, length, offset, palette.toArray(new BlockState[0]), blocks,
+                        blockEntities, 0, 0));
+                return true;
+            }
+        });
+    }
+
     // ---------------------------------------------------------------- paste
 
     /** Corners (min, max) the clipboard would cover if pasted at {@code at}. */
@@ -233,8 +318,10 @@ public final class Schematics {
         ServerLevel level = player.level();
         UUID owner = player.getUUID();
         Undo undo = new Undo(level, s, rotation, at.immutable());
+        BitSet recorded = new BitSet(); // cells already in the undo
         jobs.add(new Job() {
             int next;
+            int shaped; // second pass for fixShapes: cells done so far
 
             @Override
             public UUID owner() {
@@ -248,7 +335,7 @@ public final class Schematics {
 
             @Override
             public String progress() {
-                return "Pasting " + s.name() + ": " + (int) (100L * next / s.volume()) + "%";
+                return "Pasting " + s.name() + ": " + (int) (100L * (next + shaped) / (s.fixShapes() ? 2L * s.volume() : s.volume())) + "%";
             }
 
             @Override
@@ -274,9 +361,32 @@ public final class Schematics {
                         continue; // already right: nothing to place or undo
                     }
                     undo.add(i, old, oldBe == null ? null : oldBe.saveWithFullMetadata(level.registryAccess()));
+                    recorded.set(i);
                     level.setBlock(pos, state, FLAGS);
                     if (newTag != null) {
                         loadBlockEntity(level, pos, state, newTag);
+                    }
+                }
+                // Join panes, fences, walls, stairs and chests to what is now around them.
+                while (s.fixShapes() && shaped < s.volume()) {
+                    if ((shaped & 127) == 0 && System.nanoTime() > deadline) {
+                        return false;
+                    }
+                    int i = shaped++;
+                    if (skipAir && palette[s.blocks()[i]].isAir()) {
+                        continue;
+                    }
+                    placed(s, rotation, at, i, pos);
+                    if (level.isOutsideBuildHeight(pos)) {
+                        continue;
+                    }
+                    BlockState state = level.getBlockState(pos);
+                    BlockState joined = joinOldShape(state, level, pos);
+                    if (joined != state) {
+                        if (!recorded.get(i)) {
+                            undo.add(i, state, null); // was already the schematic's block, so it has no block entity
+                        }
+                        level.setBlock(pos, joined, FLAGS);
                     }
                 }
                 remember(owner, undo);
@@ -284,6 +394,44 @@ public final class Schematics {
                 return true;
             }
         });
+    }
+
+    /**
+     * The shape an old (pre-1.13) block had from its neighbours, which old files don't store: fences, panes, walls,
+     * stairs, gates and redstone join up, and two chests side by side become a double chest. Nothing else is
+     * touched, so water stays where it is instead of flowing, and decorative portals without a frame stay.
+     */
+    private static BlockState joinOldShape(BlockState state, ServerLevel level, BlockPos pos) {
+        Block block = state.getBlock();
+        if (block instanceof ChestBlock && state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+            Direction facing = state.getValue(ChestBlock.FACING);
+            for (Direction side : new Direction[] {facing.getClockWise(), facing.getCounterClockWise()}) {
+                BlockState other = level.getBlockState(pos.relative(side));
+                if (other.is(block) && other.getValue(ChestBlock.FACING) == facing && (other.getValue(ChestBlock.TYPE) == ChestType.SINGLE
+                        || ChestBlock.getConnectedDirection(other) == side.getOpposite())) {
+                    return state.setValue(ChestBlock.TYPE, side == facing.getClockWise() ? ChestType.LEFT : ChestType.RIGHT);
+                }
+            }
+            return state;
+        }
+        if (block instanceof CrossCollisionBlock || block instanceof WallBlock || block instanceof StairBlock
+                || block instanceof FenceGateBlock || block instanceof RedstoneWireBlock) {
+            return crossIfAlone(Block.updateFromNeighbourShapes(state, level, pos));
+        }
+        return state;
+    }
+
+    /**
+     * Before 1.9 a glass pane or iron bar touching nothing showed as a "+" cross, and old builds use that (flames,
+     * leaves, decoration). Now it would be a thin post, so it gets all four sides like the old look.
+     */
+    private static BlockState crossIfAlone(BlockState state) {
+        if (state.getBlock() instanceof IronBarsBlock && !state.getValue(CrossCollisionBlock.NORTH) && !state.getValue(CrossCollisionBlock.EAST)
+                && !state.getValue(CrossCollisionBlock.SOUTH) && !state.getValue(CrossCollisionBlock.WEST)) {
+            return state.setValue(CrossCollisionBlock.NORTH, true).setValue(CrossCollisionBlock.EAST, true)
+                    .setValue(CrossCollisionBlock.SOUTH, true).setValue(CrossCollisionBlock.WEST, true);
+        }
+        return state;
     }
 
     /** Queues undoing the player's last paste. Returns its name, or null if there is nothing to undo. */
