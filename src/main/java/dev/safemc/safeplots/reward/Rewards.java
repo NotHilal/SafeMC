@@ -67,7 +67,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 
 /**
- * Winner Chests: winning a minigame (SafeBedwars, SafeTntRun, SafeGuessBuild run {@code /rewards win}) puts one into the
+ * Winner Chests: winning a minigame (SafeBedwars, SafeTntRun, SafeGuessBuild, SafeHideSeek run {@code /rewards win}; SafeKitPvP on a 10 kill streak) puts one into the
  * player's inventory of the reward world, at most a few a day. Right-clicking one there spins a wheel that lands on a
  * prize. Prizes, chances, the world and the daily limit are in {@code config/safeplots-rewards.txt}; who got how many
  * today and chests still waiting for room are in {@code <world>/safeplots-rewards.json}.

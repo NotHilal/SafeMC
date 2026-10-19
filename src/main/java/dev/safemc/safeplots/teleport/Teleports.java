@@ -25,12 +25,12 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Warm-up, cooldown and /tpa requests. A teleport starts a 3 second warm-up that is cancelled if the player
- * moves or takes damage, so it can't be used to escape a fight; afterwards there's a 30 second cooldown.
+ * moves or takes damage, so it can't be used to escape a fight; afterwards there's a 5 second cooldown.
  * Admins teleport instantly.
  */
 public final class Teleports {
     public static final int WARMUP_TICKS = 60;
-    public static final long COOLDOWN_MS = 30_000;
+    public static final long COOLDOWN_MS = 5_000;
     public static final long REQUEST_TIMEOUT_MS = 60_000;
 
     public record Destination(ServerLevel level, Vec3 pos, float yRot, float xRot) {}
@@ -76,6 +76,11 @@ public final class Teleports {
         player.sendSystemMessage(Component.literal("Teleporting to " + what + " in " + (WARMUP_TICKS / 20) + " seconds. Don't move.")
                 .withStyle(ChatFormatting.YELLOW));
         return true;
+    }
+
+    /** Teleports right away, for everyone: no warm-up and no cooldown (e.g. world signs). Jail and freeze still apply. */
+    public static boolean now(ServerPlayer player, String what, Supplier<@Nullable Destination> destination) {
+        return finish(player, what, destination);
     }
 
     private static boolean finish(ServerPlayer player, String what, Supplier<@Nullable Destination> destination) {

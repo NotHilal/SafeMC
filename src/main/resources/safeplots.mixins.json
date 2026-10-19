@@ -3,6 +3,7 @@
   "package": "dev.safemc.safeplots.mixin",
   "mixins": [
     "ChunkMapMixin",
+    "CommandBlocksMixin",
     "DispenserBlockMixin",
     "FireBlockMixin",
     "FlowingFluidMixin",

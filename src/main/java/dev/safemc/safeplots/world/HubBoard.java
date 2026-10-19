@@ -46,7 +46,9 @@ public final class HubBoard {
     private static final List<Game> GAMES = List.of(
             new Game("BedWars", ChatFormatting.RED, "safebedwars-wins.json"),
             new Game("TNT Run", ChatFormatting.GOLD, "safetntrun-wins.json"),
-            new Game("Guess the Build", ChatFormatting.AQUA, "safeguessbuild-wins.json"));
+            new Game("Guess the Build", ChatFormatting.AQUA, "safeguessbuild-wins.json"),
+            new Game("Hide and Seek", ChatFormatting.GREEN, "safehideseek-wins.json"),
+            new Game("KitPvP", ChatFormatting.DARK_RED, "safekitpvp-wins.json")); // most kills
 
     private record Top(String name, int wins) {}
 

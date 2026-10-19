@@ -95,13 +95,17 @@ public final class SafePlots {
             dev.safemc.safeplots.reward.RewardsCommand.register(e.getDispatcher());
             dev.safemc.safeplots.moderation.Afk.register(e.getDispatcher());
             dev.safemc.safeplots.moderation.InvSee.register(e.getDispatcher());
+            dev.safemc.safeplots.moderation.EffectSource.register(e.getDispatcher());
         });
         // Moderation first: a frozen player is stopped before any other rule is even checked.
         NeoForge.EVENT_BUS.register(ModerationEvents.class);
+        NeoForge.EVENT_BUS.addListener(dev.safemc.safeplots.moderation.EffectSource::onEffect);
         NeoForge.EVENT_BUS.register(Teleports.class);
         NeoForge.EVENT_BUS.register(WorldInventories.class);
         NeoForge.EVENT_BUS.register(Portals.class);
         NeoForge.EVENT_BUS.register(Hub.class);
+        NeoForge.EVENT_BUS.register(dev.safemc.safeplots.world.HubItem.class);
+        NeoForge.EVENT_BUS.register(dev.safemc.safeplots.world.WorldSigns.class);
         NeoForge.EVENT_BUS.register(dev.safemc.safeplots.world.HubBoard.class);
         NeoForge.EVENT_BUS.register(Guide.class);
         NeoForge.EVENT_BUS.register(Elevators.class);

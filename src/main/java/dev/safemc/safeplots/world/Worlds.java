@@ -3,11 +3,13 @@ package dev.safemc.safeplots.world;
 import com.google.common.collect.ImmutableList;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import dev.safemc.safeplots.mixin.MinecraftServerAccessor;
+import dev.safemc.safeplots.plot.PlotManager;
 import dev.safemc.safeplots.teleport.Teleports;
 import java.io.IOException;
 import java.io.Reader;
@@ -20,6 +22,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -146,10 +149,19 @@ public final class Worlds {
     private final Set<String> pendingDeletes = new TreeSet<>();
     /** The /mvtp name of the hub: where /hub goes and new players start. */
     private String hub = "world";
+    /** A sign that takes players to a world's spawn ({@code /mv sign <world> [text]}). */
+    public record WorldSign(String dimension, BlockPos pos, String world, String label) {}
+
+    private final List<WorldSign> worldSigns = new ArrayList<>();
+
+    /** The /mvtp name of the game hub ({@code /mv setgamehub}), where players get a Back to hub item; null: none. */
+    private @Nullable String gameHub;
     /** False after {@code /mv endportal off}: eyes of ender can't go in portal frames and end portals don't work. */
     private boolean endPortal = true;
     /** /mvtp names of the worlds where TNT explodes ({@code /mv tnt <world> on}). Everywhere else it doesn't. */
     private final Set<String> tntWorlds = new TreeSet<>();
+    /** /mvtp names of the worlds where command blocks work ({@code /mv commandblocks <world> on}). Everywhere else they don't. */
+    private final Set<String> commandBlockWorlds = new TreeSet<>();
     /** /mvtp names of the worlds where end crystals explode ({@code /mv crystals <world> on}). Everywhere else they don't. */
     private final Set<String> crystalWorlds = new TreeSet<>();
     /** /mvtp name -> coal block elevators on or off ({@code /mv elevators}); missing means off. */
@@ -243,6 +255,47 @@ public final class Worlds {
 
     public void setHub(String name) {
         hub = name;
+        save();
+    }
+
+    public List<WorldSign> worldSigns() {
+        return List.copyOf(worldSigns);
+    }
+
+    public @Nullable WorldSign worldSignAt(Level level, BlockPos pos) {
+        String dimension = PlotManager.dimensionId(level);
+        for (WorldSign sign : worldSigns) {
+            if (sign.dimension().equals(dimension) && sign.pos().equals(pos)) {
+                return sign;
+            }
+        }
+        return null;
+    }
+
+    /** Links the sign (replacing what it was linked to). */
+    public void addWorldSign(WorldSign sign) {
+        worldSigns.removeIf(s -> s.dimension().equals(sign.dimension()) && s.pos().equals(sign.pos()));
+        worldSigns.add(sign);
+        save();
+    }
+
+    public void removeWorldSign(WorldSign sign) {
+        worldSigns.remove(sign);
+        save();
+    }
+
+    public @Nullable String gameHub() {
+        return gameHub;
+    }
+
+    /** Whether this level is the game hub. */
+    public boolean isGameHub(Level level) {
+        return gameHub != null && gameHub.equals(nameOf(level));
+    }
+
+    /** {@code null}: no game hub any more. */
+    public void setGameHub(@Nullable String name) {
+        gameHub = name;
         save();
     }
 
@@ -352,12 +405,16 @@ public final class Worlds {
         }
         worlds.remove(world.name());
         tntWorlds.remove(world.name());
+        commandBlockWorlds.remove(world.name());
         crystalWorlds.remove(world.name());
         elevatorWorlds.remove(world.name());
         alwaysDay.remove(world.name());
         noHunger.remove(world.name());
         topWinners.remove(world.name());
         noDamage.remove(world.name());
+        if (world.name().equals(gameHub)) {
+            gameHub = null;
+        }
         claimLimits.remove(world.name());
         if (hub.equals(world.name())) {
             hub = "world";
@@ -399,6 +456,26 @@ public final class Worlds {
     public boolean tnt(Level level) {
         String name = nameOf(level);
         return name != null && tnt(name);
+    }
+
+    /** {@code name} is a /mvtp name: {@code world}, {@code nether}, {@code end} or one of ours. */
+    public boolean commandBlocks(String name) {
+        return commandBlockWorlds.contains(name);
+    }
+
+    /** Whether command blocks (and command block minecarts) run in this level. Off unless turned on for the world. */
+    public boolean commandBlocks(Level level) {
+        String name = nameOf(level);
+        return name != null && commandBlocks(name);
+    }
+
+    public void setCommandBlocks(String name, boolean on) {
+        if (on) {
+            commandBlockWorlds.add(name);
+        } else {
+            commandBlockWorlds.remove(name);
+        }
+        save();
     }
 
     public boolean alwaysDay(String name) {
@@ -718,8 +795,22 @@ public final class Worlds {
         if (root.has("hub")) {
             hub = root.get("hub").getAsString();
         }
+        if (root.has("gameHub")) {
+            gameHub = root.get("gameHub").getAsString();
+        }
+        if (root.has("worldSigns")) {
+            for (JsonElement el : root.getAsJsonArray("worldSigns")) {
+                JsonObject o = el.getAsJsonObject();
+                JsonArray p = o.getAsJsonArray("pos");
+                worldSigns.add(new WorldSign(o.get("dimension").getAsString(), new BlockPos(p.get(0).getAsInt(), p.get(1).getAsInt(), p.get(2).getAsInt()),
+                        o.get("world").getAsString(), o.has("label") ? o.get("label").getAsString() : ""));
+            }
+        }
         if (root.has("tnt")) {
             root.getAsJsonArray("tnt").forEach(el -> tntWorlds.add(el.getAsString()));
+        }
+        if (root.has("commandBlocks")) {
+            root.getAsJsonArray("commandBlocks").forEach(el -> commandBlockWorlds.add(el.getAsString()));
         }
         if (root.has("crystals")) {
             root.getAsJsonArray("crystals").forEach(el -> crystalWorlds.add(el.getAsString()));
@@ -781,8 +872,32 @@ public final class Worlds {
         if (!hub.equals("world")) {
             root.addProperty("hub", hub);
         }
+        if (gameHub != null) {
+            root.addProperty("gameHub", gameHub);
+        }
+        if (!worldSigns.isEmpty()) {
+            JsonArray signs = new JsonArray();
+            for (WorldSign sign : worldSigns) {
+                JsonObject o = new JsonObject();
+                o.addProperty("dimension", sign.dimension());
+                JsonArray p = new JsonArray();
+                p.add(sign.pos().getX());
+                p.add(sign.pos().getY());
+                p.add(sign.pos().getZ());
+                o.add("pos", p);
+                o.addProperty("world", sign.world());
+                if (!sign.label().isEmpty()) {
+                    o.addProperty("label", sign.label());
+                }
+                signs.add(o);
+            }
+            root.add("worldSigns", signs);
+        }
         if (!tntWorlds.isEmpty()) {
             root.add("tnt", GSON.toJsonTree(tntWorlds));
+        }
+        if (!commandBlockWorlds.isEmpty()) {
+            root.add("commandBlocks", GSON.toJsonTree(commandBlockWorlds));
         }
         if (!crystalWorlds.isEmpty()) {
             root.add("crystals", GSON.toJsonTree(crystalWorlds));

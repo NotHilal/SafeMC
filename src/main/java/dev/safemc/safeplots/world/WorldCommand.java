@@ -124,6 +124,11 @@ public final class WorldCommand {
                                 .executes(WorldCommand::showTnt)
                                 .then(Commands.literal("on").executes(c -> setTnt(c, true)))
                                 .then(Commands.literal("off").executes(c -> setTnt(c, false)))))
+                .then(Commands.literal("commandblocks")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::showCommandBlocks)
+                                .then(Commands.literal("on").executes(c -> setCommandBlocks(c, true)))
+                                .then(Commands.literal("off").executes(c -> setCommandBlocks(c, false)))))
                 .then(Commands.literal("claims")
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
                                 .executes(WorldCommand::showClaims)
@@ -147,6 +152,16 @@ public final class WorldCommand {
                         .executes(WorldCommand::showHub)
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
                                 .executes(WorldCommand::setHub)))
+                .then(Commands.literal("sign")
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(c -> worldSign(c, ""))
+                                .then(Commands.argument("text", StringArgumentType.greedyString())
+                                        .executes(c -> worldSign(c, StringArgumentType.getString(c, "text"))))))
+                .then(Commands.literal("setgamehub")
+                        .executes(WorldCommand::showGameHub)
+                        .then(Commands.literal("off").executes(WorldCommand::gameHubOff))
+                        .then(Commands.argument("world", StringArgumentType.word()).suggests(ALL_WORLDS)
+                                .executes(WorldCommand::setGameHub)))
                 .then(Commands.literal("group")
                         .executes(WorldCommand::listGroups)
                         .then(Commands.argument("world", StringArgumentType.word()).suggests(OUR_WORLDS)
@@ -414,6 +429,25 @@ public final class WorldCommand {
                 : "✓ TNT no longer explodes in " + name + ": lit TNT and TNT minecarts just disappear, without damage.");
     }
 
+    private static int showCommandBlocks(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        return ok(c, worlds().commandBlocks(name) ? "Command blocks work in " + name + "."
+                : "Command blocks don't work in " + name + " (the default).");
+    }
+
+    private static int setCommandBlocks(CommandContext<CommandSourceStack> c, boolean on) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        worlds().setCommandBlocks(name, on);
+        return ok(c, on ? "✓ Command blocks work in " + name + " now (if the commandBlocksWork game rule is on)."
+                : "✓ Command blocks no longer run in " + name + " (they keep their command).");
+    }
+
     private static int showClaims(CommandContext<CommandSourceStack> c) {
         String name = StringArgumentType.getString(c, "world");
         if (!VANILLA.contains(name) && worlds().world(name) == null) {
@@ -497,6 +531,36 @@ public final class WorldCommand {
         worlds().setHub(name);
         return ok(c, "✓ The hub is now " + name + ". /hub goes to its spawn (set it with /mv setspawn while standing there),"
                 + " and players joining for the first time start there.");
+    }
+
+    private static int worldSign(CommandContext<CommandSourceStack> c, String label) throws CommandSyntaxException {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        WorldSigns.startLink(c.getSource().getPlayerOrException(), name, label);
+        return ok(c, "Now right-click a sign: it will take players to " + name + "'s spawn.");
+    }
+
+    private static int showGameHub(CommandContext<CommandSourceStack> c) {
+        String name = worlds().gameHub();
+        return ok(c, name == null ? "There is no game hub. Set one with /mv setgamehub <world>: players there get a Back to hub item."
+                : "The game hub is " + name + ": players there get a Back to hub item (slot 9). /mv setgamehub off to stop.");
+    }
+
+    private static int setGameHub(CommandContext<CommandSourceStack> c) {
+        String name = StringArgumentType.getString(c, "world");
+        if (!VANILLA.contains(name) && worlds().world(name) == null) {
+            return fail(c, "No world named " + name + ".");
+        }
+        worlds().setGameHub(name);
+        return ok(c, "✓ The game hub is now " + name + ". Players there get a Back to hub item in slot 9: right-click it to go to "
+                + worlds().hub() + ". (Not while they're in a game: the games have their own leave items.)");
+    }
+
+    private static int gameHubOff(CommandContext<CommandSourceStack> c) {
+        worlds().setGameHub(null);
+        return ok(c, "✓ No game hub any more: the Back to hub items are taken away.");
     }
 
     /** Why {@code name} can't be used for a new world, or null if it can. */

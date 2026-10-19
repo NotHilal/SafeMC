@@ -92,6 +92,10 @@ public final class SelfTest {
                 .then(Commands.literal("damage").executes(c -> report(c, SelfTest::damage)))
                 .then(Commands.literal("afk").executes(c -> report(c, SelfTest::afk)))
                 .then(Commands.literal("invsee").executes(c -> report(c, SelfTest::invsee)))
+                .then(Commands.literal("effectsource").executes(c -> report(c, SelfTest::effectSource)))
+                .then(Commands.literal("commandblocks").executes(c -> report(c, SelfTest::commandBlocks)))
+                .then(Commands.literal("hubitem").executes(c -> report(c, SelfTest::hubItem)))
+                .then(Commands.literal("worldsign").executes(c -> report(c, SelfTest::worldSign)))
                 .then(Commands.literal("rewards").executes(c -> report(c, SelfTest::rewards)))));
     }
 
@@ -1418,6 +1422,126 @@ public final class SelfTest {
             if (!target.hasDisconnected()) {
                 server.getPlayerList().remove(target);
             }
+        }
+    }
+
+    private static void worldSign(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        ServerPlayer p = fakePlayer(server, "Signer");
+        BlockPos at = new BlockPos(7400, 100, 7400);
+        try {
+            p.teleportTo(level, 7400.5, 101, 7401.5, java.util.Set.of(), 0, 0, true);
+            level.setBlockAndUpdate(at, net.minecraft.world.level.block.Blocks.OAK_SIGN.defaultBlockState());
+            dev.safemc.safeplots.world.WorldSigns.startLink(p, "nether", "");
+            var hit = new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(at), net.minecraft.core.Direction.SOUTH, at, false);
+            NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock(p, net.minecraft.world.InteractionHand.MAIN_HAND, at, hit));
+            var sign = worlds.worldSignAt(level, at);
+            expect(sign != null && sign.world().equals("nether"), "/mv sign nether, then right-click: the sign is linked");
+            var text = ((net.minecraft.world.level.block.entity.SignBlockEntity) level.getBlockEntity(at)).getText(net.minecraft.world.level.block.entity.SignTextSlot.FRONT);
+            String lines = text.getMessages(false).stream().map(Component::getString).reduce("", (x, y) -> x + "|" + y);
+            expect(lines.contains("Nether") && lines.contains("Click to go") && lines.contains("0 players"), "it shows the world, what to do and who's there: " + lines);
+            dev.safemc.safeplots.world.WorldSigns.startLink(p, "nether", "&5&lPrison");
+            NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock(p, net.minecraft.world.InteractionHand.MAIN_HAND, at, hit));
+            text = ((net.minecraft.world.level.block.entity.SignBlockEntity) level.getBlockEntity(at)).getText(net.minecraft.world.level.block.entity.SignTextSlot.FRONT);
+            expect(text.getMessages(false).get(0).getString().equals("Prison") && worlds.worldSigns().stream().filter(x -> x.pos().equals(at)).count() == 1,
+                    "with a text: that's the title (linking again replaces the old link)");
+            var event = new net.neoforged.neoforge.event.level.block.BreakBlockEvent(level, at, level.getBlockState(at), p);
+            NeoForge.EVENT_BUS.post(event);
+            expect(event.isCanceled() && worlds.worldSignAt(level, at) != null, "a player who isn't an admin can't break it");
+        } finally {
+            var sign = worlds.worldSignAt(level, at);
+            if (sign != null) {
+                worlds.removeWorldSign(sign);
+            }
+            level.removeBlock(at, false);
+            server.getPlayerList().remove(p);
+        }
+    }
+
+    private static void hubItem(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        String before = worlds.gameHub();
+        ServerPlayer p = fakePlayer(server, "Lobbyist");
+        var slot = dev.safemc.safeplots.world.HubItem.SLOT;
+        try {
+            p.teleportTo(level, 7300.5, 120, 7300.5, java.util.Set.of(), 0, 0, true);
+            p.setGameMode(net.minecraft.world.level.GameType.ADVENTURE);
+            p.getInventory().clearContent();
+            p.getInventory().setItem(slot, new ItemStack(Items.APPLE, 2));
+            worlds.setGameHub(null);
+            dev.safemc.safeplots.world.HubItem.syncAll(worlds, server);
+            expect(!dev.safemc.safeplots.world.HubItem.is(p.getInventory().getItem(slot)), "no game hub: no item");
+            worlds.setGameHub("world");
+            dev.safemc.safeplots.world.HubItem.syncAll(worlds, server);
+            expect(dev.safemc.safeplots.world.HubItem.is(p.getInventory().getItem(slot)), "in the game hub: a Back to hub item in slot 9");
+            expect(p.getInventory().countItem(Items.APPLE) == 2, "what was in slot 9 moved to another slot");
+            p.getInventory().setItem(3, p.getInventory().getItem(slot).copy());
+            dev.safemc.safeplots.world.HubItem.syncAll(worlds, server);
+            expect(!dev.safemc.safeplots.world.HubItem.is(p.getInventory().getItem(3)), "a copy in another slot is taken away");
+            p.addTag(dev.safemc.safeplots.moderation.Afk.IN_GAME);
+            dev.safemc.safeplots.world.HubItem.syncAll(worlds, server);
+            expect(!dev.safemc.safeplots.world.HubItem.is(p.getInventory().getItem(slot)), "in a minigame: no item (the game has its own)");
+            p.removeTag(dev.safemc.safeplots.moderation.Afk.IN_GAME);
+            dev.safemc.safeplots.world.HubItem.syncAll(worlds, server);
+            worlds.setGameHub("nether");
+            dev.safemc.safeplots.world.HubItem.syncAll(worlds, server);
+            expect(p.getInventory().countItem(Items.BED.pick(net.minecraft.world.item.DyeColor.RED)) == 0, "outside the game hub: taken away");
+        } finally {
+            worlds.setGameHub(before);
+            p.getInventory().clearContent();
+            server.getPlayerList().remove(p);
+        }
+    }
+
+    private static void commandBlocks(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        var worlds = dev.safemc.safeplots.world.Worlds.get();
+        boolean before = worlds.commandBlocks("world");
+        try {
+            worlds.setCommandBlocks("world", false);
+            expect(!level.isCommandBlockEnabled(), "command blocks are off in a world by default");
+            worlds.setCommandBlocks("world", true);
+            expect(level.isCommandBlockEnabled(), "/mv commandblocks world on: they work there");
+        } finally {
+            worlds.setCommandBlocks("world", before);
+        }
+    }
+
+    private static void effectSource(MinecraftServer server, ServerLevel level, PlotManager pm) {
+        ServerPlayer p = fakePlayer(server, "Buffed");
+        var resistance = net.minecraft.world.effect.MobEffects.RESISTANCE;
+        try {
+            p.removeAllEffects();
+            dev.safemc.safeplots.moderation.EffectSource.watch(p, p);
+            var dispatcher = server.getCommands().getDispatcher();
+            try {
+                dispatcher.execute("effect give Buffed resistance infinite 4 true", server.createCommandSourceStack());
+            } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+                throw new IllegalStateException(e);
+            }
+            String last = dev.safemc.safeplots.moderation.EffectSource.last;
+            expect(p.hasEffect(resistance) && last != null && last.contains("/effect command"), "/effect from the console: " + last);
+            p.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.SATURATION, -1, 0));
+            last = dev.safemc.safeplots.moderation.EffectSource.last;
+            expect(last != null && last.contains("another mod") && last.contains("SelfTest"), "given by mod code: names the class: " + last);
+            BlockPos at = new BlockPos(7100, 100, 7100);
+            level.setBlockAndUpdate(at, net.minecraft.world.level.block.Blocks.COMMAND_BLOCK.defaultBlockState());
+            if (level.getBlockEntity(at) instanceof net.minecraft.world.level.block.entity.CommandBlockEntity cb) {
+                cb.getCommandBlock().setCommand("effect give Buffed haste infinite 0 true");
+                cb.getCommandBlock().performCommand(level);
+                last = dev.safemc.safeplots.moderation.EffectSource.last;
+                if (p.hasEffect(net.minecraft.world.effect.MobEffects.HASTE)) {
+                    expect("a command block".equals(last), "from a command block: " + last);
+                } else {
+                    // Inside /selftest the command block's command waits until the test is over.
+                    results.add("info the command block's command is queued until /selftest ends: not tested");
+                }
+            } else {
+                results.add("info command blocks are off on this test server: not tested");
+            }
+            level.removeBlock(at, false);
+        } finally {
+            p.removeAllEffects();
+            server.getPlayerList().remove(p);
         }
     }
 

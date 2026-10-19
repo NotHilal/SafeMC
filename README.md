@@ -235,7 +235,7 @@ left on the ground for others to take.
 | `/tpaccept [player]`, `/tpdeny [player]` | Answers the newest request (or the one from that player). Requests expire after 60 s |
 
 Every teleport has a **3 second warm-up** that is cancelled if you move or take damage (so it can't be
-used to escape a fight or a creeper), then a **30 second cooldown**. Admins teleport instantly. Frozen
+used to escape a fight or a creeper), then a **5 second cooldown**. Admins teleport instantly. Frozen
 players can't teleport. Homes are stored in `<world>/safeplots-homes.json`.
 Names are 1-16 letters, digits, `_` or `-`, not case sensitive. Homes from the one-home version are kept as `home`.
 
@@ -247,6 +247,7 @@ All require op level 2 or higher. Durations look like `30m`, `2h`, `7d`, `1w` or
 |---|---|
 | `/vanish` | Toggles invisibility for yourself: non-admins can't see you and you disappear from their tab list (they see "left the game"). Other admins still see you. Ends when you log out |
 | `/invsee <player>` | Opens an online player's inventory in a chest window: rows 1-3 their inventory, row 4 their hotbar, row 5 helmet, chestplate, leggings, boots and off hand. Take items out or put items in (also with shift-click); it changes their real inventory live. Closes if they log out |
+| `/effectsource [player]` | For the next minute, says in chat what gives the player each effect they get: a command block, a datapack function, the `/effect` command, another mod (by name), or SafePlots giving back the effects saved with a world's inventory. For effects that keep coming back after `/effect clear`. The full details go to the server log |
 | `/freeze <player>` | The player can't move, build, interact, fight or use commands (except `/msg`, to talk to staff) and can't be hurt. Stays frozen after relogging or a restart |
 | `/unfreeze <player>` | Unfreezes them |
 | `/mute <player> [duration\|perm] [reason]` | Blocks chat and private messages. No duration = permanent. Survives restarts |
@@ -275,7 +276,7 @@ sign is placed at the same spot again, it immediately becomes the claim sign aga
 "Steve is now AFK" line. Players also go AFK by themselves after **5 minutes** of doing nothing (`/afk timeout
 <minutes>` changes it, admins; `0` means only with `/afk`; saved in `<world>/safeplots-afk.json`). It ends when you move,
 look around, chat, use a command or click (or `/afk` again); right after `/afk` moving only counts after 3 seconds, so
-you can stop walking first. Players in a SafeBedwars, SafeTntRun or SafeGuessBuild game never go AFK by themselves
+you can stop walking first. Players in a SafeBedwars, SafeTntRun, SafeGuessBuild or SafeHideSeek game or a SafeKitPvP arena never go AFK by themselves
 (the games tag them while they play), and vanished admins never show as AFK. Nobody gets kicked for being AFK.
 
 ### No-mob-spawn zones
@@ -332,8 +333,11 @@ Chat shows the world each player is in before their name: `[hub] <Steve> hi`. Th
 | `/killall [world]` | Removes all hostile mobs in that world (without a world: the one you're in). No drops. Pets, mobs with a name tag, leashed mobs and BedWars shop villagers are spared. Only loaded areas (near players) |
 | `/killall <world> all` | Same, but removes every mob (animals, villagers, ...), still sparing pets, named and leashed mobs |
 | `/mv tnt <world> on\|off` | TNT is **off everywhere by default**; this turns it on (or off again) for one world. Also works for `world`, `nether` and `end` |
+| `/mv commandblocks <world> on\|off` | Command blocks (and command block minecarts) are **off everywhere by default**: they keep their command (and can be edited) but never run. This turns them on for one world, e.g. a map that needs them. Also works for `world`, `nether` and `end` |
 | `/mv crystals <world> on\|off` | End crystal explosions, also **off everywhere by default**, like TNT |
 | `/mv sethub <world>` | Makes that world the hub: `/hub` goes to its spawn and players joining for the first time start there. `world` (the default) = the main world. Without `<world>`, shows the current hub |
+| `/mv setgamehub <world>\|off` | Makes that world the **game hub** (where the minigame join signs are): everyone there gets a red **Back to hub** bed in hotbar slot 9. Right-clicking it goes to the hub's spawn right away (no teleport wait or cooldown). It can't be dropped, and it's taken away outside the game hub and while someone is in a minigame (the games have their own leave item). What was in slot 9 moves to another slot. `off`: no game hub. Without `<world>`, shows the current one |
+| `/mv sign <world> [text]` | Then right-click a sign: it takes players to that world's spawn, right away (no teleport wait or cooldown, for everyone). It shows the world's name, or `[text]` with color codes (e.g. `&5&lPrison`), "Click to go" and how many players are there. Right-clicking another sign the same way links that one too; linking a sign again changes where it goes. Only admins can break one, which unlinks it |
 
 The first visit picks a safe spot near 0,0 as the spawn (a void world gets a small stone platform). Worlds
 are listed in `<world>/safeplots-worlds.json` and stored in `<world>/dimensions/safeplots/<name>/`; they load at
@@ -556,14 +560,14 @@ used up. `/parkour` shows players when their next reward is. `/parkour cooldown 
 ## Top-winners sidebar (games hub)
 
 `/mv topwinners <world> on` (admins) shows players in that world - your games hub - a sidebar on the right of their
-screen with the player with the most wins in each installed minigame (SafeBedwars, SafeTntRun, SafeGuessBuild), one line per game
+screen with the player with the most wins in each installed minigame (SafeBedwars, SafeTntRun, SafeGuessBuild, SafeHideSeek; for SafeKitPvP the most kills), one line per game
 (`BedWars: Steve (42)`, `-` when nobody won yet). `off` removes it; without on|off it says whether it's on. It's read from the games' own win files
 (`<world>/safebedwars-wins.json` ...) and updates a few seconds after a game ends; resetting a game's leaderboard resets
 it here too. It disappears when they leave that world (the games show their own sidebar).
 
 ## Winner Chests (minigame rewards)
 
-Winning a game of SafeBedwars, SafeTntRun or SafeGuessBuild (with at least 2 players, lasting at least a minute) gives a **Winner Chest**, at most
+A 10 kill streak in SafeKitPvP, or winning a game of SafeBedwars, SafeTntRun, SafeGuessBuild or SafeHideSeek (with at least 2 players, lasting at least a minute) gives a **Winner Chest**, at most
 2 per player per day (resets at midnight, server time). The chest goes straight into the player's inventory of the
 reward world (e.g. survival), so it only shows up there. If that inventory is full, it waits and is given as soon as
 there is room. Right-clicking it in the reward world opens a wheel that spins for about 3 seconds and stops on a prize;
